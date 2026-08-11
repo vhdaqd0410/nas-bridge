@@ -579,6 +579,10 @@
         + '</div>'
         + '<div class="ep-bar"><div class="ep-fill' + (epComplete ? ' complete' : '') + '" style="width:' + epPct + '%"></div></div>'
         + '<span class="ep-text' + (epComplete ? ' complete' : '') + '">' + currentEp + '/' + totalEp + ' (' + epPct + '%)' + (epComplete ? ' ✅' : '') + '</span>'
+        + '<div class="card-delivery-progress" style="display:none">'
+        + '<div class="card-dp-bar"><div class="card-dp-fill" style="width:0%"></div></div>'
+        + '<span class="card-dp-text">准备中...</span>'
+        + '</div>'
         + '</div>';
     } else if (cs === '待交付') {
       episodeHtml = buildCardDeliveryBar(p);
@@ -1726,17 +1730,38 @@
   function autoCountEpisodes(projectName, btn) {
     showToast('正在统计成片文件...');
     api('GET', '/api/project/' + encodeURIComponent(projectName) + '/auto_count').then(function(data) {
-      if (data.ok) {
-        var count = data.count;
-        var card = btn.closest('.episode-row');
-        if (card) {
-          var currentInput = card.querySelector('[data-field="current"]');
-          currentInput.value = count;
-        }
-        showToast('统计到 ' + count + ' 个成片文件，已填入当前集数');
-      } else {
-        showToast('统计失败');
+      if (!data.ok) { showToast('统计失败'); return; }
+      var count = data.count;
+      var card = btn.closest('.episode-row');
+      var total = 0;
+      if (card) {
+        var currentInput = card.querySelector('[data-field="current"]');
+        var totalInput = card.querySelector('[data-field="total"]');
+        if (currentInput) currentInput.value = count;
+        total = totalInput ? (parseInt(totalInput.value) || 0) : 0;
       }
+
+      // 先把集数持久化到 DB（这是原本漏掉的环节）
+      api('POST', '/api/project/' + encodeURIComponent(projectName) + '/episodes', {
+        total: total || 0,
+        current: count
+      }).then(function() {
+        var proj = findProject(projectName);
+        if (proj) {
+          proj.current_episodes = count;
+          if (total > 0) proj.total_episodes = total;
+        }
+        showToast('统计到 ' + count + ' 个成片文件');
+
+        // 剪辑中项目 + 集数已达标 → 自动询问初版交付
+        if (proj && proj.custom_status === '剪辑中' && total > 0 && count >= total) {
+          var progressRow = document.querySelector(
+            '.episode-row[data-ep-project="' + projectName.replace(/"/g, '&quot;') + '"]');
+          if (confirm('🎉 集数已达标！\n\n当前 ' + count + ' / 目标 ' + total + ' 集\n\n是否一键进行「初版交付」？\n（交付完成后项目自动变为"审核中"）')) {
+            startDeliverInitial(projectName, progressRow);
+          }
+        }
+      }).catch(function() { showToast('集数保存失败'); });
     }).catch(function() { showToast('操作失败'); });
   }
 
@@ -1850,6 +1875,32 @@
         }
       }).catch(function() {});
     }, 1500);
+  }
+
+  function startDeliverInitial(projectName, row) {
+    if (row) {
+      var progressArea = row.querySelector('.card-delivery-progress');
+      if (progressArea) progressArea.style.display = 'block';
+    }
+    showToast('🚀 初版交付已启动...');
+    api('POST', '/api/project/' + encodeURIComponent(projectName) + '/deliver_initial').then(function(data) {
+      if (data.ok) {
+        showToast('初版交付：' + data.message);
+        startDeliverPolling(projectName, row);
+      } else {
+        showToast('启动失败：' + data.message);
+        if (row) {
+          var progressArea = row.querySelector('.card-delivery-progress');
+          if (progressArea) progressArea.style.display = 'none';
+        }
+      }
+    }).catch(function() {
+      showToast('启动失败');
+      if (row) {
+        var progressArea = row.querySelector('.card-delivery-progress');
+        if (progressArea) progressArea.style.display = 'none';
+      }
+    });
   }
 
   // Request notification permission on load

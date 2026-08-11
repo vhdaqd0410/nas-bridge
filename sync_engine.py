@@ -1144,6 +1144,152 @@ class SyncEngine:
 
         return True, "交付已启动，共 %d 个文件" % total_files
 
+    # ==================== 初版交付（成片目录整体推送） ====================
+
+    def deliver_initial_version(self, project_name):
+        """把组内 NAS 的 01上映单集版 目录整体推送到制作部 NAS，完成后状态自动变为"审核中"。
+        触发场景：剪辑中的项目点击"统计"后发现集数已达标。
+        """
+        proj = self.db.get_project(project_name)
+        if not proj:
+            return False, "项目不存在"
+
+        if proj.get("custom_status") != "剪辑中":
+            return False, "仅剪辑中的项目可执行初版交付"
+
+        src, err = self.get_source_dir(project_name)
+        if not src:
+            return False, "组内成片目录未找到: " + str(err)
+
+        dst, err = self.get_dest_dir(project_name)
+        if not dst:
+            # 制作部成片目录还不存在，自动创建
+            prod_path = proj.get("production_path", "")
+            dst = os.path.join(prod_path, self._get_output_dir_name(project_name))
+            try:
+                os.makedirs(dst, exist_ok=True)
+            except Exception as e:
+                return False, "无法创建制作部成片目录: " + str(e)
+
+        with self._lock:
+            existing = self._deliver_tasks.get(project_name)
+            if existing and existing.get("status") in ("running", "starting"):
+                return False, "已有交付任务在进行中"
+
+        total_files = 0
+        try:
+            for _, _, files in os.walk(src):
+                total_files += len(files)
+        except OSError:
+            pass
+
+        run_id = self.db.insert_deliver_run(
+            project_name, src, dst, total_files,
+            status="running", message="初版交付 - 正在准备...",
+            started_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+        with self._lock:
+            self._deliver_tasks[project_name] = {
+                "run_id": run_id,
+                "task_type": "initial_version",
+                "status": "starting",
+                "total": total_files,
+                "current": 0,
+                "pct": 0,
+                "started_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "message": "初版交付 - 正在准备...",
+                "src": src,
+                "dst": dst,
+            }
+
+        self.db.add_sync_log(
+            project_name, "初版交付启动", "group->production",
+            file_path=src, status="info",
+            message="目标: " + dst + "，共 " + str(total_files) + " 个文件")
+
+        threading.Thread(
+            target=self._run_deliver_initial_version,
+            args=(project_name, src, dst),
+            daemon=True).start()
+        threading.Thread(
+            target=self._poll_deliver_progress,
+            args=(project_name,),
+            daemon=True).start()
+
+        return True, "初版交付已启动，共 %d 个文件" % total_files
+
+    def _run_deliver_initial_version(self, project_name, src, dst):
+        with self._lock:
+            task = self._deliver_tasks.get(project_name, {})
+            task["status"] = "running"
+            task["message"] = "初版交付 - 正在复制..."
+        proc = None
+        try:
+            os.makedirs(dst, exist_ok=True)
+            cmd = ["robocopy", src, dst] + ROBOCOPY_FAST
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            with self._lock:
+                task["proc_pid"] = proc.pid
+            stdout, stderr = proc.communicate(timeout=TIMEOUT_ROBOCOPY_FAST)
+            rc = proc.returncode
+            success = rc < 8
+            if success:
+                with self._lock:
+                    task["current"] = task["total"]
+                    task["pct"] = 100
+                    task["status"] = "done"
+                    task["message"] = "初版交付完成，状态→审核中"
+                    task["finished_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                self.db.update_project_status(
+                    project_name,
+                    custom_status="审核中",
+                    delivery_status="delivered",
+                    last_delivered_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                )
+                self.db.add_sync_log(
+                    project_name, "初版交付完成→审核中", "group->production",
+                    file_path=src, status="success",
+                    message="成片已推送到: " + dst + "，robocopy rc=" + str(rc))
+            else:
+                err = stderr.decode("gbk", errors="replace")[:500] \
+                    if stderr else "robocopy rc=%d" % rc
+                with self._lock:
+                    task["status"] = "error"
+                    task["message"] = "初版交付失败: " + err
+                self._cleanup_partial_dst(dst)
+                self.db.add_sync_log(
+                    project_name, "初版交付失败", "group->production",
+                    file_path=src, status="error", message=err)
+        except subprocess.TimeoutExpired:
+            if proc:
+                proc.kill()
+                proc.wait()
+            with self._lock:
+                task["status"] = "error"
+                task["message"] = "初版交付超时（超过1小时）"
+            self._cleanup_partial_dst(dst)
+        except Exception as e:
+            if proc:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+            with self._lock:
+                task["status"] = "error"
+                task["message"] = "初版交付异常: " + str(e)
+        finally:
+            run_id = task.get("run_id")
+            if run_id:
+                try:
+                    with self._lock:
+                        final_status = task.get("status", "unknown")
+                        final_msg = task.get("message", "")
+                    self.db.finish_deliver_run(
+                        run_id, final_status, final_msg,
+                        finished_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+                except Exception as _e:
+                    logger.warning("finish_deliver_run 失败: %s", _e)
+
     def _poll_deliver_progress(self, project_name):
         """独立后台线程：周期性 os.walk 目标目录更新进度（不在 API 请求里做，避免卡死）"""
         import time as _time

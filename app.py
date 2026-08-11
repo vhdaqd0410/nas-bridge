@@ -320,6 +320,13 @@ def api_project_deliver(project_name):
     return jsonify({"ok": ok, "message": msg})
 
 
+@app.route("/api/project/<path:project_name>/deliver_initial", methods=["POST"])
+def api_project_deliver_initial(project_name):
+    """初版交付：组内成片目录整体推送，完成后状态自动变为"审核中"。"""
+    ok, msg = sync_engine.deliver_initial_version(project_name)
+    return jsonify({"ok": ok, "message": msg})
+
+
 @app.route("/api/project/<path:project_name>/deliver_status", methods=["GET"])
 def api_project_deliver_status(project_name):
     """查询一键交付任务的实时状态"""
