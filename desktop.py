@@ -27,10 +27,13 @@ def start_flask():
     """在后台线程中启动 Flask 服务 + Watcher"""
     try:
         from app import app, watcher
-        # 启动 watcher（监听成片目录）
         threading.Thread(target=watcher.start, daemon=True).start()
-        # use_reloader=False 避免双进程
-        app.run(host="127.0.0.1", port=8089, debug=False, use_reloader=False)
+        try:
+            from waitress import serve
+            serve(app, host="127.0.0.1", port=8089, threads=8)
+        except ImportError:
+            app.run(host="127.0.0.1", port=8089, debug=False,
+                    use_reloader=False, threaded=True)
     except Exception as e:
         log.error("Flask 启动失败: %s", e)
 

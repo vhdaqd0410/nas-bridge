@@ -533,7 +533,12 @@ def main():
     threading.Thread(target=watcher.start, daemon=True).start()
 
     try:
-        app.run(host=host, port=port, debug=False)
+        try:
+            from waitress import serve
+            logger.info("使用 waitress WSGI 服务器")
+            serve(app, host=host, port=port, threads=8)
+        except ImportError:
+            app.run(host=host, port=port, debug=False, threaded=True)
     finally:
         watcher.stop()
 

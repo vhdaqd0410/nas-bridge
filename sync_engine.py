@@ -37,6 +37,32 @@ def find_dir_recursive(base_path, target_name, max_depth=6):
     return found
 
 
+def _quick_find_file(base_path, filename, max_depth=4, timeout=2.0):
+    """浅层快速查找：在 max_depth 层内用 os.scandir 找文件名，超过 timeout 秒直接放弃。
+    避免在大的网络盘上 os.walk 阻塞 API。
+    """
+    import time as _time
+    deadline = _time.time() + timeout
+
+    def _walk(depth, cur):
+        if _time.time() > deadline:
+            return None
+        try:
+            with os.scandir(cur) as entries:
+                for e in entries:
+                    if e.is_file(follow_symlinks=False) and e.name == filename:
+                        return e.path
+                    if e.is_dir(follow_symlinks=False) and depth > 0:
+                        found = _walk(depth - 1, e.path)
+                        if found:
+                            return found
+        except (PermissionError, OSError):
+            pass
+        return None
+
+    return _walk(max_depth, base_path)
+
+
 class SyncEngine:
     def __init__(self, config, db):
         self.config = config
@@ -47,12 +73,13 @@ class SyncEngine:
                                           "01上映单集版")
         self.special_projects = config.get("special_projects", {}) or {}
         self._output_dir_cache = {}  # 缓存递归查找结果
+        self._deliver_tasks = {}      # project_name -> {status, total, current, pct, started_at, message}
+        self._lock = threading.RLock()  # 保护上面两个共享字典
         self._dept_labels = config["nas"].get("production_labels", {})
         self._unc_map = config["nas"].get("unc_map", {})
         self._delivery_check_running = False  # 防止重复后台检测
         self._delivery_folder = config.get(
             "delivery_folder", r"C:\Users\Admin\Desktop\000交付")
-        self._deliver_tasks = {}  # project_name -> {status, total, current, pct, started_at, message}
 
     # ==================== UNC 路径转换 ====================
 
@@ -280,12 +307,15 @@ class SyncEngine:
     def _find_output_dirs(self, base_path, project_name):
         """在项目目录下递归查找 01上映单集版 目录，带缓存"""
         cache_key = base_path + "|" + project_name
-        if cache_key in self._output_dir_cache:
-            return self._output_dir_cache[cache_key]
+        with self._lock:
+            if cache_key in self._output_dir_cache:
+                return self._output_dir_cache[cache_key]
 
         dir_name = self._get_output_dir_name(project_name)
         dirs = find_dir_recursive(base_path, dir_name)
-        self._output_dir_cache[cache_key] = dirs
+
+        with self._lock:
+            self._output_dir_cache[cache_key] = dirs
         return dirs
 
     def deliver_file(self, project_name, file_path):
@@ -306,13 +336,12 @@ class SyncEngine:
                     src = candidate
                     break
             else:
-                # 简单兜底：直接在 group_path 下找文件名
-                for root, _, files in os.walk(proj["group_path"]):
-                    if file_path in files:
-                        src = os.path.join(root, file_path)
-                        break
-                else:
-                    return False, "未在组内项目目录中找到文件: " + file_path
+                # 简单兜底：在 group_path 下浅层（4 层内）快速找文件名，超时或找不到直接让用户用完整路径
+                found = _quick_find_file(proj["group_path"], file_path, max_depth=4)
+                if not found:
+                    return False, "未在组内项目目录中找到文件: " + file_path + \
+                        "，请使用完整路径重试"
+                src = found
 
         if not os.path.isfile(src):
             return False, "文件不存在: " + src
@@ -776,7 +805,8 @@ class SyncEngine:
         threading.Thread(target=_check, daemon=True).start()
 
     def clear_cache(self):
-        self._output_dir_cache.clear()
+        with self._lock:
+            self._output_dir_cache.clear()
 
     # ==================== 项目自定义状态 ====================
 
@@ -841,7 +871,8 @@ class SyncEngine:
         # 更新 DB 中的 group_path
         self.db.update_project_status(project_name, group_path=target_path)
         # 清缓存
-        self._output_dir_cache.clear()
+        with self._lock:
+            self._output_dir_cache.clear()
 
         logger.info("项目已移入 00已完成: %s -> %s", group_path, target_path)
         self.db.add_sync_log(
@@ -1033,9 +1064,10 @@ class SyncEngine:
 
         dst = os.path.join(prod_path, folder_name)
 
-        existing = self._deliver_tasks.get(project_name)
-        if existing and existing.get("status") in ("running", "starting"):
-            return False, "已有交付任务在进行中"
+        with self._lock:
+            existing = self._deliver_tasks.get(project_name)
+            if existing and existing.get("status") in ("running", "starting"):
+                return False, "已有交付任务在进行中"
 
         total_files = 0
         try:
@@ -1044,16 +1076,17 @@ class SyncEngine:
         except OSError:
             pass
 
-        self._deliver_tasks[project_name] = {
-            "status": "starting",
-            "total": total_files,
-            "current": 0,
-            "pct": 0,
-            "started_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "message": "正在准备...",
-            "src": src,
-            "dst": dst,
-        }
+        with self._lock:
+            self._deliver_tasks[project_name] = {
+                "status": "starting",
+                "total": total_files,
+                "current": 0,
+                "pct": 0,
+                "started_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "message": "正在准备...",
+                "src": src,
+                "dst": dst,
+            }
 
         self.db.add_sync_log(
             project_name, "一键交付启动", "group->production",
@@ -1076,30 +1109,33 @@ class SyncEngine:
         import time as _time
         for _ in range(240):  # 最多 240*2=480s
             _time.sleep(2)
-            task = self._deliver_tasks.get(project_name)
-            if not task:
-                break
-            if task.get("status") not in ("running", "starting"):
-                break
-            dst = task.get("dst", "")
+            with self._lock:
+                task = self._deliver_tasks.get(project_name)
+                if not task:
+                    break
+                if task.get("status") not in ("running", "starting"):
+                    break
+                dst = task.get("dst", "")
             if not dst:
                 continue
             try:
                 cur = 0
                 for _, _, files in os.walk(dst):
                     cur += len(files)
-                task["current"] = cur
-                if task["total"] > 0:
-                    task["pct"] = min(round(cur / task["total"] * 100), 99)
-                else:
-                    task["pct"] = 0
+                with self._lock:
+                    task["current"] = cur
+                    if task["total"] > 0:
+                        task["pct"] = min(round(cur / task["total"] * 100), 99)
+                    else:
+                        task["pct"] = 0
             except OSError:
                 pass
 
     def _run_deliver_to_production(self, project_name, src, dst):
-        task = self._deliver_tasks.get(project_name, {})
-        task["status"] = "running"
-        task["message"] = "正在复制..."
+        with self._lock:
+            task = self._deliver_tasks.get(project_name, {})
+            task["status"] = "running"
+            task["message"] = "正在复制..."
         try:
             cmd = ["robocopy", src, dst, "/E", "/MT:8", "/R:1", "/W:1", "/NP", "/NFL", "/NDL"]
             result = subprocess.run(cmd, capture_output=True, timeout=3600)
@@ -1107,11 +1143,12 @@ class SyncEngine:
             rc = result.returncode
             success = rc < 8
             if success:
-                task["current"] = task["total"]
-                task["pct"] = 100
-                task["status"] = "done"
-                task["message"] = "交付完成"
-                task["finished_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                with self._lock:
+                    task["current"] = task["total"]
+                    task["pct"] = 100
+                    task["status"] = "done"
+                    task["message"] = "交付完成"
+                    task["finished_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 self.db.update_project_status(
                     project_name,
                     delivery_status="delivered",
@@ -1125,24 +1162,28 @@ class SyncEngine:
             else:
                 err = result.stderr.decode("gbk", errors="replace")[:500] \
                     if result.stderr else "robocopy rc=%d" % rc
-                task["status"] = "error"
-                task["message"] = "交付失败: " + err
+                with self._lock:
+                    task["status"] = "error"
+                    task["message"] = "交付失败: " + err
                 self.db.add_sync_log(
                     project_name, "一键交付失败", "group->production",
                     file_path=src, status="error", message=err)
         except subprocess.TimeoutExpired:
-            task["status"] = "error"
-            task["message"] = "交付超时（超过1小时）"
+            with self._lock:
+                task["status"] = "error"
+                task["message"] = "交付超时（超过1小时）"
         except Exception as e:
-            task["status"] = "error"
-            task["message"] = "交付异常: " + str(e)
+            with self._lock:
+                task["status"] = "error"
+                task["message"] = "交付异常: " + str(e)
 
     def get_deliver_status(self, project_name):
         """查询交付任务状态（纯内存读取，不做文件系统操作）"""
-        task = self._deliver_tasks.get(project_name)
-        if not task:
-            return {"status": "idle"}
-        resp = {k: v for k, v in task.items() if k not in ("src",)}
+        with self._lock:
+            task = self._deliver_tasks.get(project_name)
+            if not task:
+                return {"status": "idle"}
+            resp = {k: v for k, v in task.items() if k not in ("src",)}
         return resp
 
     # ==================== 集数管理 ====================

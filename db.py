@@ -25,6 +25,8 @@ class Database:
 
     def init_db(self):
         with self.get_conn() as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout=5000")
             c = conn.cursor()
             c.execute("""CREATE TABLE IF NOT EXISTS projects (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
