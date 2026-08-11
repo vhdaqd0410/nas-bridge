@@ -6,6 +6,8 @@ import yaml
 import logging
 import threading
 import subprocess
+import signal
+from logging.handlers import RotatingFileHandler
 from flask import Flask, render_template, jsonify, request, send_file
 
 from db import Database
@@ -31,14 +33,20 @@ def reload_sync_engine():
     sync_engine._unc_map = config["nas"].get("unc_map", {})
     sync_engine._output_dir_cache.clear()
 
+_log_cfg = config.get("logging", {})
+_log_file = _log_cfg.get("file", "nas_bridge.log")
+_log_level = getattr(logging, _log_cfg.get("level", "INFO"))
+_log_max_mb = _log_cfg.get("max_mb", 10)
+_log_backups = _log_cfg.get("backups", 5)
+
 logging.basicConfig(
-    level=getattr(logging, config.get("logging", {}).get("level", "INFO")),
+    level=_log_level,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler(
-            config.get("logging", {}).get("file", "nas_bridge.log"),
-            encoding="utf-8"),
+        RotatingFileHandler(
+            _log_file, maxBytes=_log_max_mb * 1024 * 1024,
+            backupCount=_log_backups, encoding="utf-8"),
     ])
 
 logger = logging.getLogger("nas-bridge")
@@ -48,6 +56,12 @@ sync_engine = SyncEngine(config, db)
 watcher = Watcher(config, db)
 
 app = Flask(__name__)
+_start_time = time.time()
+
+
+def _bg(fn, *args, **kwargs):
+    """把 fn 放到后台 daemon 线程执行"""
+    threading.Thread(target=fn, args=args, kwargs=kwargs, daemon=True).start()
 
 # 开发模式：禁用浏览器缓存，避免修改代码后看到旧页面
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
@@ -84,9 +98,7 @@ def api_scan():
 
 @app.route("/api/sync/<path:project_name>", methods=["POST"])
 def api_sync(project_name):
-    def _run():
-        sync_engine.sync_project(project_name)
-    threading.Thread(target=_run, daemon=True).start()
+    _bg(sync_engine.sync_project, project_name)
     return jsonify({"ok": True, "message": "同步已启动"})
 
 
@@ -105,9 +117,7 @@ def api_deliver_batch(project_name):
     if not file_names:
         return jsonify({"ok": False, "message": "未选择文件"})
 
-    def _run():
-        sync_engine.deliver_files_batch(project_name, file_names)
-    threading.Thread(target=_run, daemon=True).start()
+    _bg(sync_engine.deliver_files_batch, project_name, file_names)
     return jsonify({"ok": True, "message": "批量回传已启动", "total": len(file_names)})
 
 
@@ -134,6 +144,44 @@ def api_status():
         "production_roots": config["nas"].get("production_roots", []),
         "group_root": config["nas"].get("group_root", ""),
         "output_dir_name": config.get("output_dir_name", ""),
+    })
+
+
+@app.route("/api/health")
+def api_health():
+    """健康检查端点：db / watcher / 交付任务状态"""
+    import sqlite3
+    t0 = time.time()
+    db_alive = False
+    db_error = ""
+    try:
+        conn = sqlite3.connect(config.get("database", "nas_bridge.db"),
+                               timeout=1)
+        conn.execute("SELECT 1")
+        conn.close()
+        db_alive = True
+    except Exception as e:
+        db_error = str(e)
+
+    deliver_tasks = []
+    with sync_engine._lock:
+        for name, t in list(sync_engine._deliver_tasks.items()):
+            deliver_tasks.append({
+                "project": name,
+                "status": t.get("status"),
+                "pct": t.get("pct", 0),
+                "started_at": t.get("started_at", ""),
+            })
+
+    return jsonify({
+        "ok": True,
+        "db_alive": db_alive,
+        "db_error": db_error,
+        "watcher_alive": watcher.is_alive(),
+        "db_path": config.get("database", "nas_bridge.db"),
+        "uptime": time.time() - _start_time,
+        "deliver_tasks": deliver_tasks,
+        "response_ms": round((time.time() - t0) * 1000, 1),
     })
 
 
@@ -279,6 +327,14 @@ def api_project_deliver_status(project_name):
     return jsonify({"ok": True, "status": status})
 
 
+@app.route("/api/project/<path:project_name>/deliver_runs", methods=["GET"])
+def api_project_deliver_runs(project_name):
+    """查询一键交付历史"""
+    limit = request.args.get("limit", 30, type=int)
+    runs = db.get_deliver_runs(project_name, limit=limit)
+    return jsonify({"ok": True, "runs": runs})
+
+
 @app.route("/api/deliver_revision/<path:project_name>", methods=["POST"])
 def api_deliver_revision(project_name):
     """修改模式下批量回传文件到制作部NAS的修改文件夹"""
@@ -288,9 +344,7 @@ def api_deliver_revision(project_name):
     if not file_names:
         return jsonify({"ok": False, "message": "未选择文件"})
 
-    def _run():
-        sync_engine.deliver_revision_batch(project_name, file_names, rev_folder_name)
-    threading.Thread(target=_run, daemon=True).start()
+    _bg(sync_engine.deliver_revision_batch, project_name, file_names, rev_folder_name)
     return jsonify({"ok": True, "message": "修改回传已启动", "total": len(file_names)})
 
 
@@ -314,9 +368,7 @@ def api_deliver_revision_folders(project_name):
     if not folder_names:
         return jsonify({"ok": False, "message": "未选择文件夹"})
 
-    def _run():
-        sync_engine.deliver_revision_folders_batch(project_name, folder_names)
-    threading.Thread(target=_run, daemon=True).start()
+    _bg(sync_engine.deliver_revision_folders_batch, project_name, folder_names)
     return jsonify({"ok": True, "message": "文件夹回传已启动", "total": len(folder_names)})
 
 
@@ -523,13 +575,33 @@ def api_service_restart():
     return jsonify({"ok": True, "message": "服务即将重启，页面将自动刷新"})
 
 
+_shutting_down = threading.Event()
+
+
+def _handle_shutdown(signum=None, frame=None):
+    """SIGINT/SIGTERM → 优雅停机"""
+    if _shutting_down.is_set():
+        return
+    _shutting_down.set()
+    logger.info("收到关机信号，开始优雅停机...")
+    sync_engine.shutdown()
+    watcher.stop()
+    # waitress 会收到 KeyboardInterrupt，try/finally 兜底
+
+
+signal.signal(signal.SIGINT, _handle_shutdown)
+try:
+    signal.signal(signal.SIGTERM, _handle_shutdown)
+except (AttributeError, ValueError):
+    pass  # Windows 没有 SIGTERM
+
+
 def main():
     web_cfg = config.get("web", {})
     host = web_cfg.get("host", "0.0.0.0")
     port = web_cfg.get("port", 8080)
     logger.info("Web 服务启动: http://%s:%d", host, port)
 
-    # 先启动 Flask，再在后台线程启动 watcher（扫描大量目录可能很慢）
     threading.Thread(target=watcher.start, daemon=True).start()
 
     try:
@@ -540,7 +612,14 @@ def main():
         except ImportError:
             app.run(host=host, port=port, debug=False, threaded=True)
     finally:
-        watcher.stop()
+        if not _shutting_down.is_set():
+            _shutting_down.set()
+        sync_engine.shutdown()
+        try:
+            watcher.stop()
+        except Exception:
+            pass
+        logger.info("服务已退出")
 
 
 if __name__ == "__main__":

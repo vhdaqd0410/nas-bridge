@@ -63,6 +63,63 @@ def _quick_find_file(base_path, filename, max_depth=4, timeout=2.0):
     return _walk(max_depth, base_path)
 
 
+# ==================== subprocess 常量 & 工具 ====================
+
+# robocopy 基础参数（所有复制场景共享）
+ROBOCOPY_BASE = ["/E", "/R:1", "/W:1", "/NP", "/NFL", "/NDL"]
+ROBOCOPY_MIR = ["/MIR"] + ROBOCOPY_BASE
+ROBOCOPY_FAST = ["/MT:8"] + ROBOCOPY_BASE       # 多线程快速复制
+ROBOCOPY_XCOPY_CMD = ["cmd", "/c", "xcopy", "/E", "/I", "/Y"]
+CMD_MKDIR_CMD = ["cmd", "/c", "mkdir"]
+
+# 超时常量（秒）
+TIMEOUT_MKDIR = 30
+TIMEOUT_XCOPY_SMALL = 120
+TIMEOUT_XCOPY_BIG = 600
+TIMEOUT_ROBOCOPY_FAST = 3600      # 一键交付 → 制作部
+TIMEOUT_ROBOCOPY_SYNC = 7200      # 组内 → 制作部同步
+
+
+def _exec(cmd, timeout, label="", unc_alt=None):
+    """统一 subprocess.run 封装。
+    cmd: [exe, arg1, ...]
+    timeout: 超时秒
+    label: 日志标签
+    unc_alt: 如果 timeout 触发，用 UNC 路径的备选命令 (list)
+    返回 (ok: bool, msg: str, returncode: int)
+    """
+    try:
+        result = subprocess.run(cmd, capture_output=True, timeout=timeout)
+        rc = result.returncode
+        if rc < 8 and rc != -9:
+            return True, "ok", rc
+        err = result.stderr.decode("gbk", errors="replace")[:500] \
+            if result.stderr else "rc=%d" % rc
+        return False, err, rc
+    except subprocess.TimeoutExpired:
+        if unc_alt:
+            logger.warning("%s 超时，尝试 UNC 备选", label)
+            try:
+                result = subprocess.run(unc_alt, capture_output=True, timeout=timeout)
+                rc = result.returncode
+                if rc < 8:
+                    return True, "ok (unc)", rc
+                err = result.stderr.decode("gbk", errors="replace")[:500] \
+                    if result.stderr else "rc=%d" % rc
+                return False, "UNC 备选失败: " + err, rc
+            except Exception as e:
+                return False, "UNC 备选异常: " + str(e), -1
+        return False, "超时（超过 %d 秒）" % timeout, -1
+    except Exception as e:
+        return False, str(e), -1
+
+
+def _exec_popen(cmd, label=""):
+    """启动 robocopy Popen 句柄，返回 (proc, pid)。"""
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    return proc, proc.pid
+
+
 class SyncEngine:
     def __init__(self, config, db):
         self.config = config
@@ -242,8 +299,7 @@ class SyncEngine:
 
     def _robocopy(self, src, dst, exclude_patterns):
         """执行 robocopy 增量镜像同步"""
-        cmd = ["robocopy", src, dst, "/MIR", "/E",
-               "/R:1", "/W:1", "/NP", "/NFL", "/NDL"]
+        cmd = ["robocopy", src, dst] + ROBOCOPY_MIR
 
         xf = [p for p in exclude_patterns
               if "*" in p or "." in p]
@@ -254,20 +310,10 @@ class SyncEngine:
         if xd:
             cmd += ["/XD"] + xd
 
-        try:
-            result = subprocess.run(
-                cmd, capture_output=True, timeout=7200)
-            if result.returncode < 8:
-                return True, "同步成功"
-            else:
-                err = result.stderr.decode("gbk", errors="replace")[:500] \
-                    if result.stderr else "未知错误"
-                return False, "robocopy 返回码 %d: %s" % (
-                    result.returncode, err)
-        except subprocess.TimeoutExpired:
-            return False, "同步超时（超过2小时）"
-        except Exception as e:
-            return False, str(e)
+        ok, msg, rc = _exec(cmd, TIMEOUT_ROBOCOPY_SYNC, label="robocopy_sync")
+        if ok:
+            return True, "同步成功"
+        return False, "robocopy 返回码 %d: %s" % (rc, msg)
 
     # ==================== 成片交付 ====================
 
@@ -1006,36 +1052,24 @@ class SyncEngine:
             message="源: " + src + " -> 目标: " + dst)
 
         try:
-            # 注意：不能用 /MIR 镜像模式！/MIR 会删除目标目录中源目录没有的文件。
-            # 这里用 /E 纯增量复制，只添加文件，不删除项目原有内容。
-            # 先用映射盘符路径（非管理员模式可用），失败再试 UNC 路径
-            cmd = ["robocopy", src, dst, "/E",
-                   "/R:1", "/W:1", "/NP", "/NFL", "/NDL"]
-            result = subprocess.run(cmd, capture_output=True, timeout=600)
-            if result.returncode >= 8:
-                # 映射盘符失败，尝试 UNC 路径
-                dst_unc = self._to_unc(dst)
-                if dst_unc != dst:
-                    cmd_unc = ["robocopy", src, dst_unc, "/E",
-                               "/R:1", "/W:1", "/NP", "/NFL", "/NDL"]
-                    result = subprocess.run(cmd_unc, capture_output=True, timeout=600)
-            if result.returncode < 8:
+            # 注意：不能用 /MIR 镜像模式！这里用 /E 纯增量复制
+            cmd = ["robocopy", src, dst] + ROBOCOPY_BASE
+            dst_unc = self._to_unc(dst)
+            unc_alt = None
+            if dst_unc != dst:
+                unc_alt = ["robocopy", src, dst_unc] + ROBOCOPY_BASE
+            ok, msg, rc = _exec(cmd, TIMEOUT_XCOPY_BIG,
+                                label="copy_delivery_folder", unc_alt=unc_alt)
+            if ok:
                 self.db.add_sync_log(
                     project_name, "交付文件夹复制完成", "delivery_folder->group",
                     file_path=src, status="success", message="已复制到: " + dst)
                 return True, "复制完成"
             else:
-                err = result.stderr.decode("gbk", errors="replace")[:500] \
-                    if result.stderr else "未知错误"
                 self.db.add_sync_log(
                     project_name, "交付文件夹复制失败", "delivery_folder->group",
-                    file_path=src, status="error", message=err)
-                return False, "robocopy 返回码 %d: %s" % (result.returncode, err)
-        except subprocess.TimeoutExpired:
-            self.db.add_sync_log(
-                project_name, "交付文件夹复制超时", "delivery_folder->group",
-                file_path=src, status="error", message="复制超时（超过10分钟）")
-            return False, "复制超时"
+                    file_path=src, status="error", message=msg)
+                return False, "robocopy 返回码 %d: %s" % (rc, msg)
         except Exception as e:
             self.db.add_sync_log(
                 project_name, "交付文件夹复制异常", "delivery_folder->group",
@@ -1076,8 +1110,14 @@ class SyncEngine:
         except OSError:
             pass
 
+        run_id = self.db.insert_deliver_run(
+            project_name, src, dst, total_files,
+            status="running", message="正在准备...",
+            started_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
         with self._lock:
             self._deliver_tasks[project_name] = {
+                "run_id": run_id,
                 "status": "starting",
                 "total": total_files,
                 "current": 0,
@@ -1136,11 +1176,14 @@ class SyncEngine:
             task = self._deliver_tasks.get(project_name, {})
             task["status"] = "running"
             task["message"] = "正在复制..."
+        proc = None
         try:
-            cmd = ["robocopy", src, dst, "/E", "/MT:8", "/R:1", "/W:1", "/NP", "/NFL", "/NDL"]
-            result = subprocess.run(cmd, capture_output=True, timeout=3600)
-
-            rc = result.returncode
+            cmd = ["robocopy", src, dst] + ROBOCOPY_FAST
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            with self._lock:
+                task["proc_pid"] = proc.pid
+            stdout, stderr = proc.communicate(timeout=3600)
+            rc = proc.returncode
             success = rc < 8
             if success:
                 with self._lock:
@@ -1160,22 +1203,79 @@ class SyncEngine:
                     file_path=src, status="success",
                     message="已交付到: " + dst + "，robocopy rc=" + str(rc))
             else:
-                err = result.stderr.decode("gbk", errors="replace")[:500] \
-                    if result.stderr else "robocopy rc=%d" % rc
+                err = stderr.decode("gbk", errors="replace")[:500] \
+                    if stderr else "robocopy rc=%d" % rc
                 with self._lock:
                     task["status"] = "error"
                     task["message"] = "交付失败: " + err
+                self._cleanup_partial_dst(dst)
                 self.db.add_sync_log(
                     project_name, "一键交付失败", "group->production",
                     file_path=src, status="error", message=err)
         except subprocess.TimeoutExpired:
+            if proc:
+                proc.kill()
+                proc.wait()
             with self._lock:
                 task["status"] = "error"
                 task["message"] = "交付超时（超过1小时）"
+            self._cleanup_partial_dst(dst)
         except Exception as e:
+            if proc:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
             with self._lock:
                 task["status"] = "error"
                 task["message"] = "交付异常: " + str(e)
+        finally:
+            run_id = task.get("run_id")
+            if run_id:
+                try:
+                    with self._lock:
+                        final_status = task.get("status", "unknown")
+                        final_msg = task.get("message", "")
+                    self.db.finish_deliver_run(
+                        run_id, final_status, final_msg,
+                        finished_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+                except Exception as _e:
+                    logger.warning("finish_deliver_run 失败: %s", _e)
+
+    def _cleanup_partial_dst(self, dst):
+        """交付失败/超时后清理目标目录，避免留下半成品"""
+        if not dst or not os.path.exists(dst):
+            return
+        try:
+            import shutil as _shutil
+            _shutil.rmtree(dst, ignore_errors=True)
+            logger.warning("已清理交付失败的半成品目录: %s", dst)
+        except Exception as e:
+            logger.warning("清理半成品目录失败 %s: %s", dst, e)
+
+    def shutdown(self, wait=False):
+        """优雅停机：终止所有在跑的 robocopy 子进程"""
+        pids = []
+        with self._lock:
+            for name, task in list(self._deliver_tasks.items()):
+                if task.get("status") == "running" and task.get("proc_pid"):
+                    pids.append((name, task["proc_pid"]))
+        for name, pid in pids:
+            try:
+                import subprocess as _sp
+                # Windows: taskkill /F /T /PID 终止整个进程树
+                _sp.run(["taskkill", "/F", "/T", "/PID", str(pid)],
+                        capture_output=True, timeout=5)
+                logger.warning("已终止交付子进程 PID=%s (%s)", pid, name)
+            except Exception as e:
+                logger.warning("终止 PID=%s 失败: %s", pid, e)
+        # 把所有 running 任务标为 aborted
+        with self._lock:
+            for name, task in self._deliver_tasks.items():
+                if task.get("status") == "running":
+                    task["status"] = "aborted"
+                    task["message"] = "服务关闭时中止"
+        logger.info("SyncEngine.shutdown() 完成，清理了 %d 个交付进程", len(pids))
 
     def get_deliver_status(self, project_name):
         """查询交付任务状态（纯内存读取，不做文件系统操作）"""

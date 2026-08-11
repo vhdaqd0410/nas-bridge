@@ -96,6 +96,9 @@ class Watcher:
         self.observer.join()
         logger.info("成片监听已停止")
 
+    def is_alive(self):
+        return self.observer.is_alive() if self.enabled else False
+
     def _refresh_loop(self):
         self._refresh_watches()
         self._timer = threading.Timer(60, self._refresh_loop)

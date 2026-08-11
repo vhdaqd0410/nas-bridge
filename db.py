@@ -83,6 +83,18 @@ class Database:
                 message TEXT,
                 created_at TEXT DEFAULT (datetime('now','localtime'))
             )""")
+            c.execute("""CREATE TABLE IF NOT EXISTS deliver_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_name TEXT NOT NULL,
+                src TEXT,
+                dst TEXT,
+                total_files INTEGER DEFAULT 0,
+                status TEXT,
+                message TEXT,
+                started_at TEXT,
+                finished_at TEXT,
+                created_at TEXT DEFAULT (datetime('now','localtime'))
+            )""")
 
     # ---------- 项目 CRUD ----------
     def upsert_project(self, name, production_path, group_path,
@@ -184,4 +196,36 @@ class Database:
                    FROM delivery_logs
                    ORDER BY created_at DESC LIMIT ?""",
                 (limit,)).fetchall()
+            return [dict(r) for r in rows]
+
+    # ---------- 一键交付历史 ----------
+    def insert_deliver_run(self, project_name, src="", dst="",
+                           total_files=0, status="running", message="",
+                           started_at=""):
+        with self.get_conn() as conn:
+            cur = conn.execute(
+                """INSERT INTO deliver_runs
+                   (project_name, src, dst, total_files, status, message, started_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (project_name, src, dst, total_files,
+                 status, message, started_at))
+            return cur.lastrowid
+
+    def finish_deliver_run(self, run_id, status, message="", finished_at=""):
+        with self.get_conn() as conn:
+            conn.execute(
+                """UPDATE deliver_runs SET status=?, message=?, finished_at=?
+                   WHERE id=?""",
+                (status, message, finished_at, run_id))
+
+    def get_deliver_runs(self, project_name=None, limit=30):
+        with self.get_conn() as conn:
+            if project_name:
+                rows = conn.execute(
+                    "SELECT * FROM deliver_runs WHERE project_name=? ORDER BY id DESC LIMIT ?",
+                    (project_name, limit)).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM deliver_runs ORDER BY id DESC LIMIT ?",
+                    (limit,)).fetchall()
             return [dict(r) for r in rows]

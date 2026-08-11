@@ -43,3 +43,5 @@ database: nas_bridge.db
 logging:
   level: INFO
   file: nas_bridge.log
+  max_mb: 10
+  backups: 5
