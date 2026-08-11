@@ -596,11 +596,14 @@ def _handle_shutdown(signum=None, frame=None):
     # waitress 会收到 KeyboardInterrupt，try/finally 兜底
 
 
-signal.signal(signal.SIGINT, _handle_shutdown)
+try:
+    signal.signal(signal.SIGINT, _handle_shutdown)
+except ValueError:
+    pass  # 子线程启动时无法注册 signal，desktop.py 场景兜底
 try:
     signal.signal(signal.SIGTERM, _handle_shutdown)
 except (AttributeError, ValueError):
-    pass  # Windows 没有 SIGTERM
+    pass  # Windows 没有 SIGTERM；子线程也会报 ValueError
 
 
 def main():
