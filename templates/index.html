@@ -529,6 +529,10 @@
     var openBtnAttrs = 'data-action="open-folder" data-project="' + htm(p.name) + '"';
     if (openPath) openBtnAttrs += ' data-path="' + htm(openPath) + '"';
     var openBtn = '<button class="btn btn-secondary btn-sm" ' + openBtnAttrs + '>打开路径</button>';
+    var hasProdPath = !!(p.production_path);
+    var openProdBtn = hasProdPath
+      ? '<button class="btn btn-secondary btn-sm" data-action="open-prod" data-project="' + htm(p.name) + '">打开制作部</button>'
+      : '';
     var actionsHtml = '';
     var fileBtnLabel = '查看成片';
     if (p.custom_status === '修改中') fileBtnLabel = '查看修改内容';
@@ -537,17 +541,17 @@
       // 已完成项目：查看交付文件（对应 000交付 目录）
       actionsHtml =
         '<button class="btn btn-secondary btn-sm" data-action="files" data-project="' + htm(p.name) + '">查看交付文件</button> '
-        + openBtn;
+        + openBtn + (openProdBtn ? ' ' + openProdBtn : '');
     } else if (p.project_type === 'production') {
       actionsHtml =
         '<button class="btn btn-primary btn-sm" data-action="sync" data-project="' + htm(p.name) + '">同步素材</button> ' +
         '<button class="btn btn-secondary btn-sm" data-action="files" data-project="' + htm(p.name) + '">' + fileBtnLabel + '</button> '
-        + openBtn;
+        + openBtn + (openProdBtn ? ' ' + openProdBtn : '');
     } else {
       // group projects on O-drive — only show output files
       actionsHtml =
         '<button class="btn btn-secondary btn-sm" data-action="files" data-project="' + htm(p.name) + '">' + fileBtnLabel + '</button> '
-        + openBtn;
+        + openBtn + (openProdBtn ? ' ' + openProdBtn : '');
     }
 
     // Custom status dropdown
@@ -894,6 +898,20 @@
     }
     api('POST', '/api/project/' + encodeURIComponent(name) + '/open_folder', postData).then(function(data) {
       if (data.ok) showToast(data.message || '已打开');
+      else showToast(data.message || '打开失败');
+    }).catch(function() { showToast('打开失败'); });
+  }
+
+  function openProductionFolder(name) {
+    var proj = findProject(name);
+    var cs = proj ? (proj.custom_status || '') : '';
+    var which = 'dest';
+    if (cs === '修改中') which = 'dest_revision';
+    else if (cs === '剪辑中') which = 'dest';
+    else if (cs === '审核中') which = 'dest';
+    else which = 'prod';  // 兜底：打开制作部项目根
+    api('POST', '/api/project/' + encodeURIComponent(name) + '/open_folder', { which: which }).then(function(data) {
+      if (data.ok) showToast(data.message || '已打开制作部');
       else showToast(data.message || '打开失败');
     }).catch(function() { showToast('打开失败'); });
   }
@@ -1624,6 +1642,7 @@
     else if (action === 'deliver' && project) deliverFile(project);
     else if (action === 'preview' && project) previewFile(project, subpath);
     else if (action === 'open-folder' && project) openProjectFolder(project, dataPath);
+    else if (action === 'open-prod' && project) openProductionFolder(project);
   });
 
   document.getElementById('modal').addEventListener('click', function(e) {

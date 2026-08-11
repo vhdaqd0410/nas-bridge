@@ -224,6 +224,8 @@ def api_project_open_folder(project_name):
     which:
       - source: 组内NAS成片目录（01上映单集版）
       - dest:   制作部NAS成片目录（01上映单集版）
+      - dest_revision: 制作部NAS最近的修改文件夹（01上映单集版/MMDD修改），找不到则 fallback 到 dest
+      - source_revision: 组内NAS最近的修改文件夹（同上）
       - project: 项目根路径（优先 group_path，其次 production_path）
       - group:   组内NAS项目根目录
       - prod:    制作部NAS项目根目录
@@ -262,6 +264,25 @@ def api_project_open_folder(project_name):
                     err = "项目无可用路径"
     elif which == "source":
         path, err = sync_engine.get_source_dir(project_name)
+    elif which == "source_revision":
+        src_dir, err = sync_engine.get_source_dir(project_name)
+        if src_dir:
+            rev_path, _ = sync_engine.find_revision_folder(project_name)
+            path = rev_path if rev_path else src_dir
+    elif which == "dest":
+        path, err = sync_engine.get_dest_dir(project_name)
+    elif which == "dest_revision":
+        # 找到组内侧最近的修改文件夹名，拼出制作部侧对应路径
+        src_rev, _ = sync_engine.find_revision_folder(project_name)
+        dest_dir, err = sync_engine.get_dest_dir(project_name)
+        if not dest_dir:
+            path = None
+        elif src_rev:
+            rev_name = os.path.basename(src_rev.rstrip("\\/"))
+            candidate = os.path.join(dest_dir, rev_name)
+            path = candidate if os.path.isdir(candidate) else dest_dir
+        else:
+            path = dest_dir  # 无修改文件夹 → fallback 到 01上映单集版
     else:
         path, err = sync_engine.get_dest_dir(project_name)
 
