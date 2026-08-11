@@ -1,0 +1,45 @@
+nas:
+  production_roots:
+  - N:\AI漫剧二部中转
+  - N:\AI漫剧一部中转\AI漫剧一部海外
+  - N:\AI漫剧九部中转\海外
+  - N:\AI漫剧六部中转
+  production_labels:
+    N:\AI漫剧二部中转: AI漫剧二部
+    N:\AI漫剧一部中转\AI漫剧一部海外: AI漫剧一部海外
+    N:\AI漫剧九部中转\海外: AI漫剧九部海外
+    N:\AI漫剧六部中转: AI漫剧六部中转
+  group_root: O:\AI漫剧剪辑一组
+  unc_map:
+    'N:': \\192.168.8.234\ai漫剧中转盘
+    'O:': \\192.168.8.93\ai漫剧后期
+sync:
+  mode: full
+  exclude_patterns:
+  - '*.tmp'
+  - '*.bak'
+  - Thumbs.db
+  - .DS_Store
+  - ~$*
+output_dir_name: 01上映单集版
+
+# 交付文件夹模板路径（设为"待交付"时自动复制到项目根目录）
+delivery_folder: "C:\\Users\\Admin\\Desktop\\000交付"
+watcher:
+  enabled: true
+  stable_seconds: 30
+  extensions:
+  - .mp4
+  - .mov
+  - .mxf
+  - .avi
+  - .wav
+  - .aiff
+special_projects: {}
+web:
+  host: 0.0.0.0
+  port: 8089
+database: nas_bridge.db
+logging:
+  level: INFO
+  file: nas_bridge.log

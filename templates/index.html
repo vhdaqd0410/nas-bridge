@@ -1,0 +1,2080 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NAS Bridge - 项目同步管理</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; background: #f5f5f7; color: #1d1d1f; min-height: 100vh; }
+
+  .header { background: #fff; border-bottom: 1px solid #d2d2d7; padding: 12px 24px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; flex-wrap: wrap; gap: 8px; }
+  .header h1 { font-size: 18px; font-weight: 600; letter-spacing: -0.3px; }
+  .header .actions { display: flex; gap: 10px; align-items: center; }
+  .status-badge { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: #86868b; }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #34c759; }
+  .status-dot.offline { background: #ff3b30; }
+
+  .btn { padding: 7px 14px; border-radius: 8px; border: none; font-size: 13px; cursor: pointer; transition: opacity 0.15s, background 0.15s; font-family: inherit; }
+  .btn:active { opacity: 0.7; }
+  .btn-primary { background: #0071e3; color: #fff; }
+  .btn-primary:hover { background: #0077ed; }
+  .btn-secondary { background: #e8e8ed; color: #1d1d1f; }
+  .btn-secondary:hover { background: #dcdce0; }
+  .btn-danger { background: #e74c3c; color: #fff; }
+  .btn-danger:hover { background: #c0392b; }
+  .btn-sm { padding: 5px 11px; font-size: 12px; }
+
+  /* ---- search ---- */
+  .search-bar { max-width: 1200px; margin: 20px auto 0; padding: 0 20px; }
+  .search-input { width: 100%; padding: 10px 16px 10px 40px; border-radius: 10px; border: 1px solid #d2d2d7; font-size: 14px; font-family: inherit; background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' fill='%2386868b' viewBox='0 0 16 16'%3E%3Cpath d='M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1.007 1.007 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0z'/%3E%3C/svg%3E") 14px center no-repeat; outline: none; }
+  .search-input:focus { border-color: #0071e3; box-shadow: 0 0 0 3px rgba(0,113,227,0.15); }
+  .search-stats { font-size: 12px; color: #86868b; margin-top: 6px; }
+
+  /* ---- toolbar (sort + filter) ---- */
+  .toolbar { max-width: 1200px; margin: 10px auto 0; padding: 0 20px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .toolbar-group { display: flex; align-items: center; gap: 6px; }
+  .toolbar-label { font-size: 12px; color: #86868b; white-space: nowrap; }
+  .toolbar select { padding: 5px 10px; border-radius: 8px; border: 1px solid #d2d2d7; font-size: 13px; font-family: inherit; background: #fff; cursor: pointer; outline: none; }
+  .toolbar select:focus { border-color: #0071e3; }
+
+  .container { max-width: 1200px; margin: 0 auto; padding: 16px 20px 32px; }
+
+  /* ---- department section ---- */
+  .dept-section { margin-bottom: 24px; }
+  .dept-header { display: flex; align-items: center; gap: 10px; padding: 10px 0; cursor: pointer; user-select: none; border-bottom: 1px solid #e5e5e7; margin-bottom: 14px; }
+  .dept-header:hover .dept-name { color: #0071e3; }
+  .dept-arrow { font-size: 12px; color: #86868b; transition: transform 0.2s; width: 16px; text-align: center; }
+  .dept-arrow.collapsed { transform: rotate(-90deg); }
+  .dept-name { font-size: 15px; font-weight: 600; transition: color 0.15s; }
+  .dept-badge { font-size: 12px; background: #e8e8ed; color: #86868b; padding: 2px 10px; border-radius: 10px; }
+  .dept-badge-group { background: #e6f4ea; color: #137333; }
+  .dept-completed .dept-name { color: #86868b; }
+  .dept-badge-completed { background: #f2f2f7; color: #636366; }
+  .dept-body { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; }
+  .dept-body.hidden { display: none; }
+
+  /* ---- card ---- */
+  .project-card { background: #fff; border-radius: 12px; padding: 16px; border: 1px solid #e5e5e7; transition: box-shadow 0.15s; }
+  .project-card:hover { box-shadow: 0 2px 12px rgba(0,0,0,0.06); }
+  .project-card.card-completed { background: #fafafa; border-color: #e5e5e7; opacity: 0.85; }
+  .project-card.card-completed:hover { box-shadow: 0 1px 4px rgba(0,0,0,0.04); }
+  .project-card .card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+  .project-card .name { font-size: 14px; font-weight: 600; word-break: break-all; flex: 1; line-height: 1.4; }
+  .project-card .status-row { display: flex; gap: 12px; margin-bottom: 8px; }
+  .status-item { flex: 1; }
+  .status-label { font-size: 11px; color: #86868b; margin-bottom: 3px; }
+  .status-value { font-size: 12px; }
+  .tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; }
+  .tag-pending { background: #f5f5f7; color: #86868b; }
+  .tag-syncing { background: #e8f0fe; color: #1a73e8; }
+  .tag-synced { background: #e6f4ea; color: #137333; }
+  .tag-delivered { background: #e6f4ea; color: #137333; }
+  .tag-partial { background: #fef7e0; color: #b06000; }
+  .tag-error { background: #fef0ef; color: #c5221f; }
+  .tag-special { background: #fef7e0; color: #b06000; }
+  .tag-group { background: #e6f4ea; color: #137333; font-size: 10px; padding: 1px 6px; border-radius: 3px; margin-left: 4px; }
+  .tag-nogroup { background: #fef0ef; color: #c5221f; font-size: 10px; padding: 1px 6px; border-radius: 3px; margin-left: 4px; }
+  .progress-text { font-size: 11px; color: #86868b; margin-left: 4px; }
+  .time-row { font-size: 11px; color: #86868b; margin-bottom: 10px; line-height: 1.5; }
+  .card-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+  .empty { text-align: center; padding: 60px 20px; color: #86868b; }
+  .empty-icon { font-size: 40px; margin-bottom: 12px; opacity: 0.4; }
+
+  /* ---- modal ---- */
+  .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.35); display: none; align-items: center; justify-content: center; z-index: 1000; }
+  .modal-overlay.active { display: flex; }
+  .modal { background: #fff; border-radius: 14px; padding: 24px; width: 90%; max-width: 600px; max-height: 80vh; overflow-y: auto; }
+  .modal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .modal-header h2 { font-size: 16px; font-weight: 600; }
+  .modal-close { cursor: pointer; font-size: 22px; color: #86868b; line-height: 1; padding: 0 4px; }
+  .file-list { list-style: none; }
+  .file-item { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #f0f0f2; gap: 12px; }
+  .file-item:last-child { border-bottom: none; }
+  .file-info { flex: 1; min-width: 0; }
+  .file-name { font-size: 13px; font-weight: 500; word-break: break-all; }
+  .file-meta { font-size: 11px; color: #86868b; margin-top: 2px; }
+  .file-checkbox { flex-shrink: 0; width: 16px; height: 16px; accent-color: #0071e3; cursor: pointer; }
+
+  /* ---- modal toolbar ---- */
+  .modal-toolbar { display: flex; align-items: center; gap: 12px; padding: 8px 0 12px; border-bottom: 1px solid #e5e5e7; margin-bottom: 12px; flex-wrap: wrap; }
+  .checkbox-all { font-size: 13px; color: #1d1d1f; display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
+  .checkbox-all input { width: 16px; height: 16px; accent-color: #0071e3; cursor: pointer; }
+  .file-count { font-size: 13px; color: #86868b; flex: 1; }
+
+  /* ---- batch progress ---- */
+  .batch-progress { padding: 8px 0 12px; border-bottom: 1px solid #e5e5e7; margin-bottom: 12px; }
+  .progress-bar { height: 6px; background: #e8e8ed; border-radius: 3px; overflow: hidden; margin-bottom: 6px; }
+  .progress-fill { height: 100%; background: #0071e3; border-radius: 3px; transition: width 0.3s ease; width: 0; }
+  .progress-text { font-size: 12px; color: #86868b; }
+  .batch-result-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+
+  /* ---- logs ---- */
+  .logs-panel { background: #fff; border-radius: 12px; padding: 20px; border: 1px solid #e5e5e7; }
+  .log-item { padding: 7px 0; border-bottom: 1px solid #f5f5f7; font-size: 12px; display: flex; gap: 10px; align-items: baseline; }
+  .log-item:last-child { border-bottom: none; }
+  .log-time { color: #86868b; white-space: nowrap; min-width: 135px; }
+  .log-type { font-weight: 600; min-width: 36px; }
+  .log-type-sync { color: #1a73e8; }
+  .log-type-delivery { color: #137333; }
+  .log-project { color: #1d1d1f; min-width: 80px; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .log-message { color: #555; flex: 1; word-break: break-all; }
+  .log-message.success { color: #137333; }
+  .log-message.error { color: #c5221f; }
+  .log-message.info { color: #86868b; }
+  .loading { text-align: center; padding: 30px; color: #86868b; font-size: 13px; }
+  .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #1d1d1f; color: #fff; padding: 10px 20px; border-radius: 10px; font-size: 13px; z-index: 2000; opacity: 0; transition: opacity 0.2s; pointer-events: none; }
+  .toast.show { opacity: 0.9; }
+
+  /* ---- video preview ---- */
+  .preview-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); display: none; align-items: center; justify-content: center; z-index: 2000; }
+  .preview-overlay.active { display: flex; }
+  .preview-container { position: relative; max-width: 90%; max-height: 90vh; }
+  .preview-container video { max-width: 100%; max-height: 90vh; border-radius: 8px; background: #000; }
+  .preview-close { position: absolute; top: -36px; right: 0; cursor: pointer; font-size: 28px; color: #fff; line-height: 1; }
+  .preview-title { position: absolute; top: -36px; left: 0; color: #fff; font-size: 14px; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .file-name.clickable { cursor: pointer; color: #0071e3; }
+  .file-name.clickable:hover { text-decoration: underline; }
+
+  /* ---- NAS path management ---- */
+  .path-section { margin-bottom: 20px; }
+  .path-section-title { font-size: 13px; font-weight: 600; color: #1d1d1f; margin-bottom: 8px; padding-bottom: 4px; border-bottom: 1px solid #e5e5e7; }
+  .path-item { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; gap: 10px; }
+  .path-item-path { font-size: 13px; flex: 1; word-break: break-all; }
+  .path-item-label { font-size: 12px; color: #86868b; background: #f5f5f7; padding: 2px 8px; border-radius: 4px; white-space: nowrap; }
+  .path-current-row { font-size: 13px; padding: 8px 0; color: #1d1d1f; word-break: break-all; }
+  .path-current-row .label { color: #86868b; font-size: 12px; }
+  .path-add-form { display: flex; gap: 8px; margin-top: 8px; align-items: center; }
+  .path-input { padding: 6px 12px; border-radius: 8px; border: 1px solid #d2d2d7; font-size: 13px; font-family: inherit; outline: none; }
+  .path-input:focus { border-color: #0071e3; box-shadow: 0 0 0 3px rgba(0,113,227,0.1); }
+  .btn-danger-sm { background: #fef0ef; color: #c5221f; padding: 4px 10px; font-size: 12px; border-radius: 6px; border: none; cursor: pointer; font-family: inherit; }
+  .btn-danger-sm:hover { background: #fde0de; }
+
+  /* ---- custom status ---- */
+  .custom-status-row { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+  .custom-status-label { font-size: 11px; color: #86868b; white-space: nowrap; }
+  .custom-status-select { padding: 3px 8px; border-radius: 6px; border: 1px solid #d2d2d7; font-size: 12px; font-family: inherit; background: #fff; cursor: pointer; outline: none; }
+  .custom-status-select:focus { border-color: #0071e3; }
+  .custom-status-select.status-剪辑中 { border-color: #0071e3; color: #0071e3; background: #f0f6ff; }
+  .custom-status-select.status-审核中 { border-color: #6b3fa0; color: #6b3fa0; background: #f3eefb; }
+  .custom-status-select.status-修改中 { border-color: #b06000; color: #b06000; background: #fef7e0; }
+  .custom-status-select.status-待交付 { border-color: #b06000; color: #b06000; background: #fef7e0; font-weight: 600; }
+  .custom-status-select.status-已完成 { border-color: #137333; color: #137333; background: #e6f4ea; font-weight: 600; }
+
+  /* ---- episode progress ---- */
+  .episode-row { margin-bottom: 8px; }
+  .episode-inputs { display: flex; align-items: center; gap: 4px; margin-bottom: 6px; flex-wrap: wrap; }
+  .episode-label { font-size: 11px; color: #86868b; white-space: nowrap; }
+  .ep-input { width: 48px; padding: 3px 6px; border-radius: 6px; border: 1px solid #d2d2d7; font-size: 12px; font-family: inherit; outline: none; text-align: center; }
+  .ep-input:focus { border-color: #0071e3; }
+  .ep-sep { font-size: 12px; color: #86868b; }
+  .ep-btn { padding: 3px 8px; font-size: 11px; border-radius: 6px; border: 1px solid #d2d2d7; background: #fff; cursor: pointer; font-family: inherit; }
+  .ep-btn:hover { background: #f5f5f7; }
+  .ep-btn-primary { background: #0071e3; color: #fff; border-color: #0071e3; }
+  .ep-btn-primary:hover { background: #0077ed; }
+  .ep-bar { height: 8px; background: #e8e8ed; border-radius: 4px; overflow: hidden; margin-bottom: 3px; }
+  .ep-fill { height: 100%; background: linear-gradient(90deg, #0071e3, #34c759); border-radius: 4px; transition: width 0.4s ease; }
+  .ep-fill.complete { background: #34c759; }
+  .ep-text { font-size: 11px; color: #86868b; }
+  .ep-text.complete { color: #137333; font-weight: 600; }
+  .ep-notify { font-size: 11px; color: #137333; font-weight: 600; margin-top: 3px; display: flex; align-items: center; gap: 4px; }
+
+  /* ---- card delivery stats (待交付卡片显示) ---- */
+  .card-delivery-row { background: #f2f3f5; border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; }
+  .card-delivery-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 12px; }
+  .delivery-summary { color: #1d1d1f; font-weight: 500; }
+  .delivery-summary b { color: #0071e3; font-size: 13px; }
+  .delivery-summary-sub { color: #86868b; margin-left: auto; }
+  .delivery-refresh-btn { font-size: 11px; padding: 2px 8px; }
+  .card-delivery-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; }
+  .card-delivery-item { display: flex; align-items: center; gap: 6px; font-size: 11px; }
+  .card-delivery-label { width: 70px; flex-shrink: 0; color: #4a4a4a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .card-delivery-mini-bar { flex: 1; height: 5px; background: #e0e0e5; border-radius: 3px; overflow: hidden; }
+  .card-delivery-mini-fill { height: 100%; border-radius: 3px; transition: width 0.4s ease; }
+  .card-delivery-count { width: 60px; text-align: right; color: #6b6b70; font-variant-numeric: tabular-nums; font-size: 10.5px; }
+  .card-delivery-progress { margin: 4px 0 8px; padding: 6px 8px; background: #fff; border-radius: 6px; border: 1px solid #e5e7eb; }
+  .card-dp-bar { height: 8px; background: #e5e7eb; border-radius: 4px; overflow: hidden; margin-bottom: 3px; }
+  .card-dp-fill { height: 100%; background: linear-gradient(90deg, #0071e3, #34c759); border-radius: 4px; transition: width 0.4s ease; }
+  .card-dp-text { font-size: 11px; color: #4a4a4a; }
+
+
+  .breadcrumb-bar { display: flex; align-items: center; gap: 4px; padding: 8px 0 12px; border-bottom: 1px solid #e5e5e7; margin-bottom: 12px; flex-wrap: wrap; }
+  .breadcrumb-item { font-size: 13px; color: #0071e3; cursor: pointer; }
+  .breadcrumb-item:hover { text-decoration: underline; }
+  .breadcrumb-sep { font-size: 12px; color: #86868b; }
+  .breadcrumb-current { font-size: 13px; color: #1d1d1f; font-weight: 500; }
+  .folder-item { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid #f0f0f2; cursor: pointer; }
+  .folder-item:hover { background: #f5f5f7; }
+  .folder-item:last-child { border-bottom: none; }
+  .folder-icon { font-size: 20px; }
+  .folder-name { font-size: 13px; font-weight: 500; flex: 1; }
+  .folder-count { font-size: 11px; color: #86868b; }
+  .delivery-file-item { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #f0f0f2; gap: 12px; }
+  .delivery-file-item:last-child { border-bottom: none; }
+  .back-btn { padding: 5px 11px; font-size: 12px; border-radius: 8px; border: 1px solid #d2d2d7; background: #fff; cursor: pointer; font-family: inherit; }
+  .back-btn:hover { background: #f5f5f7; }
+
+  /* ---- mode badge in modal ---- */
+  .mode-badge { display: inline-block; padding: 2px 10px; border-radius: 4px; font-size: 11px; font-weight: 500; margin-left: 8px; }
+  .mode-badge.editing { background: #f0f6ff; color: #0071e3; }
+  .mode-badge.revising { background: #fef7e0; color: #b06000; }
+  .mode-badge.delivery { background: #e6f4ea; color: #137333; }
+
+  /* ---- episode progress in modal ---- */
+  .modal-episode-bar { margin-bottom: 12px; }
+  .modal-ep-fill { height: 100%; background: #0071e3; border-radius: 3px; transition: width 0.3s; }
+
+  /* ---- delivery progress panel ---- */
+  .delivery-progress-panel {
+    background: #f7f8fa;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin: 10px 0 8px;
+  }
+  .delivery-progress-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 10px;
+  }
+  .delivery-progress-title { font-size: 13px; font-weight: 600; color: #1d1d1f; }
+  .delivery-ep-edit { font-size: 12px; color: #666; display: inline-flex; align-items: center; gap: 4px; }
+  .delivery-progress-row {
+    display: flex; align-items: center; font-size: 12px;
+    padding: 4px 0;
+  }
+  .delivery-progress-name { width: 150px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .delivery-progress-count { width: 110px; text-align: right; flex-shrink: 0; color: #4a4a4a; font-variant-numeric: tabular-nums; }
+  .delivery-folder-link { color: #0071e3; text-decoration: none; cursor: pointer; }
+  .delivery-folder-link:hover { text-decoration: underline; }
+  .progress-fill.complete { background: #34c759 !important; }
+  .delivery-progress-panel .progress-bar { background: #e5e7eb; }
+</style>
+</head>
+<body>
+  <div class="header">
+    <h1>NAS Bridge</h1>
+    <div class="actions">
+      <span class="status-badge">
+        <span class="status-dot" id="watcher-dot"></span>
+        <span id="watcher-status">监听中</span>
+      </span>
+      <button class="btn btn-secondary btn-sm" id="btn-paths">NAS 路径</button>
+      <button class="btn btn-secondary btn-sm" id="btn-scan">刷新项目</button>
+      <button class="btn btn-secondary btn-sm" id="btn-restart" title="重启服务">重启</button>
+      <button class="btn btn-danger btn-sm" id="btn-stop" title="停止服务">停止</button>
+    </div>
+  </div>
+
+  <div class="search-bar">
+    <input type="text" class="search-input" id="search" placeholder="搜索项目名称...">
+    <div class="search-stats" id="search-stats"></div>
+  </div>
+
+  <div class="toolbar">
+    <div class="toolbar-group">
+      <span class="toolbar-label">排序</span>
+      <select id="sort-select">
+        <option value="name">项目名称</option>
+        <option value="custom_status">项目状态</option>
+        <option value="created_at">创建时间</option>
+        <option value="department">来源部门</option>
+        <option value="delivery">交付状态</option>
+        <option value="delivered_time">最近交付时间</option>
+      </select>
+    </div>
+    <div class="toolbar-group">
+      <span class="toolbar-label">项目状态</span>
+      <select id="filter-custom-status">
+        <option value="">全部</option>
+        <option value="剪辑中">剪辑中</option>
+        <option value="审核中">审核中</option>
+        <option value="修改中">修改中</option>
+        <option value="待交付">待交付</option>
+        <option value="已完成">已完成</option>
+        <option value="none">未设置</option>
+      </select>
+    </div>
+    <div class="toolbar-group">
+      <span class="toolbar-label">来源部门</span>
+      <select id="filter-department">
+        <option value="">全部</option>
+      </select>
+    </div>
+    <div class="toolbar-group">
+      <span class="toolbar-label">交付状态</span>
+      <select id="filter-delivery">
+        <option value="">全部</option>
+        <option value="pending">待交付</option>
+        <option value="delivered">已交付</option>
+        <option value="partial">部分交付</option>
+        <option value="error">回传失败</option>
+      </select>
+    </div>
+    <div class="toolbar-group">
+      <span class="toolbar-label">组盘状态</span>
+      <select id="filter-group">
+        <option value="">全部</option>
+        <option value="on_group">已在组盘</option>
+        <option value="not_group">未拷贝</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="container">
+    <div id="project-sections">
+      <div class="loading">加载中...</div>
+    </div>
+
+    <div class="section-title" style="margin-top:8px;">操作日志</div>
+    <div class="logs-panel">
+      <div id="logs">
+        <div class="loading">加载中...</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="modal">
+    <div class="modal">
+      <div class="modal-header">
+        <h2 id="modal-title">成片文件</h2>
+        <span class="modal-close" id="modal-close">&times;</span>
+      </div>
+      <div id="modal-extra" style="display:none"></div>
+      <div class="modal-toolbar" id="modal-toolbar" style="display:none">
+        <label class="checkbox-all"><input type="checkbox" id="select-all" onchange="toggleSelectAll()"> 全选</label>
+        <span class="file-count" id="file-count"></span>
+        <button class="btn btn-primary btn-sm" id="btn-batch-deliver" disabled>批量回传</button>
+      </div>
+      <div class="batch-progress" id="batch-progress" style="display:none">
+        <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+        <span class="progress-text" id="progress-text"></span>
+        <div class="batch-result-actions" id="batch-result-actions" style="display:none">
+          <button class="btn btn-secondary btn-sm" id="btn-open-dest">📂 打开目标路径</button>
+          <button class="btn btn-secondary btn-sm" id="btn-copy-dest">📋 复制目标路径</button>
+          <button class="btn btn-secondary btn-sm" id="btn-open-source">📂 打开源路径</button>
+          <button class="btn btn-secondary btn-sm" id="btn-copy-source">📋 复制源路径</button>
+        </div>
+      </div>
+      <ul class="file-list" id="file-list">
+        <li class="loading">加载中...</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <!-- NAS Path Management Modal -->
+  <div class="modal-overlay" id="paths-modal">
+    <div class="modal" style="max-width:680px">
+      <div class="modal-header">
+        <h2>NAS 路径管理</h2>
+        <span class="modal-close" id="paths-modal-close">&times;</span>
+      </div>
+
+      <!-- Production Roots -->
+      <div class="path-section">
+        <div class="path-section-title">制作部 NAS 路径</div>
+        <div id="prod-paths-list"></div>
+        <div class="path-add-form">
+          <input type="text" class="path-input" id="prod-path-input" placeholder="路径，如 N:\AI漫剧X部中转" style="flex:1">
+          <input type="text" class="path-input" id="prod-label-input" placeholder="标签（如 AI漫剧X部）" style="width:160px">
+          <button class="btn btn-primary btn-sm" id="btn-add-prod">添加</button>
+        </div>
+      </div>
+
+      <!-- Group Root -->
+      <div class="path-section">
+        <div class="path-section-title">组内 NAS 路径</div>
+        <div class="path-current-row" id="group-root-row"></div>
+        <div class="path-add-form">
+          <input type="text" class="path-input" id="group-path-input" placeholder="新路径，如 O:\AI漫剧剪辑一组" style="flex:1">
+          <button class="btn btn-primary btn-sm" id="btn-set-group">更新</button>
+        </div>
+      </div>
+
+      <!-- UNC Map -->
+      <div class="path-section">
+        <div class="path-section-title">UNC 路径映射（管理员权限用）</div>
+        <div id="unc-paths-list"></div>
+        <div class="path-add-form">
+          <input type="text" class="path-input" id="unc-drive-input" placeholder="盘符 N:" style="width:80px">
+          <input type="text" class="path-input" id="unc-path-input" placeholder="UNC 路径，如 \\192.168.x.x\共享名" style="flex:1">
+          <button class="btn btn-primary btn-sm" id="btn-add-unc">添加</button>
+        </div>
+      </div>
+
+      <div style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end">
+        <button class="btn btn-secondary btn-sm" id="btn-paths-done">完成</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="preview-overlay" id="preview-overlay">
+    <div class="preview-container">
+      <span class="preview-title" id="preview-title"></span>
+      <span class="preview-close" id="preview-close">&times;</span>
+      <video id="preview-video" controls></video>
+    </div>
+  </div>
+
+<script>
+  var currentProject = '';
+  var allData = { production: [], group_all: [], group_completed: [] };
+  var collapsedDepts = {};
+  var sortMode = 'name';
+  var filterDelivery = '';
+  var filterGroup = '';
+  var filterCustomStatus = '';
+  var filterDepartment = '';
+
+  // 排序权重：交付状态排序时的优先级
+  var deliveryOrder = { 'delivered': 0, 'partial': 1, 'delivering': 2, 'error': 3, 'pending': 4 };
+  // 排序权重：自定义状态排序时的优先级
+  var customStatusOrder = { '剪辑中': 0, '审核中': 1, '修改中': 2, '待交付': 3, '已完成': 4 };
+
+  function showToast(msg) {
+    var el = document.getElementById('toast');
+    el.textContent = msg;
+    el.classList.add('show');
+    setTimeout(function() { el.classList.remove('show'); }, 2500);
+  }
+
+  function api(method, url, body) {
+    var opts = { method: method };
+    if (body) {
+      opts.headers = { 'Content-Type': 'application/json' };
+      opts.body = JSON.stringify(body);
+    }
+    return fetch(url, opts).then(function(r) { return r.json(); });
+  }
+
+  function htm(s) {
+    if (!s) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  }
+
+  function buildCardDeliveryBar(p) {
+    var stats = p.delivery_stats || null;
+    if (!stats) {
+      return '<div class="episode-row">加载中...<button class="ep-btn" data-action="delivery-refresh" data-project="' + htm(p.name) + '">统计</button></div>';
+    }
+    var items = stats.items || [];
+    var totalEp = stats.total_episodes || p.total_episodes || 0;
+    var overall = stats.overall_pct || 0;
+    var allDone = overall >= 100;
+
+    var html = '<div class="card-delivery-row" data-ep-project="' + htm(p.name) + '">';
+    html += '<div class="card-delivery-header">';
+    html += '<span class="delivery-summary">📦 交付进度 <b>' + overall + '%</b>' + (allDone ? ' ✅' : '') + '</span>';
+    html += '<span class="delivery-summary-sub">总集数 ' + totalEp + '</span>';
+    html += '<button class="ep-btn delivery-refresh-btn" data-action="delivery-refresh" data-project="' + htm(p.name) + '">🔄 统计</button>';
+    if (allDone) {
+      html += '<button class="ep-btn ep-btn-primary deliver-btn" data-action="deliver-start" data-project="' + htm(p.name) + '">🚀 一键交付</button>';
+    }
+    html += '</div>';
+    html += '<div class="card-delivery-progress" style="display:none">';
+    html += '<div class="card-dp-bar"><div class="card-dp-fill" style="width:0%"></div></div>';
+    html += '<span class="card-dp-text">准备中...</span>';
+    html += '</div>';
+    html += '<div class="card-delivery-grid">';
+    for (var i = 0; i < items.length; i++) {
+      var it = items[i];
+      var itPct = it.total > 0 ? Math.round(it.current / it.total * 100) : 0;
+      var itOk = it.total > 0 && it.current >= it.total;
+      var color = itOk ? '#34c759' : '#0071e3';
+      html += '<div class="card-delivery-item">';
+      html += '<div class="card-delivery-label" title="' + htm(it.label) + '">' + htm(it.label) + '</div>';
+      html += '<div class="card-delivery-mini-bar"><div class="card-delivery-mini-fill" style="width:' + itPct + '%;background:' + color + '"></div></div>';
+      html += '<div class="card-delivery-count">' + it.current + '/' + it.total + (itOk ? ' ✅' : '') + '</div>';
+      html += '</div>';
+    }
+    html += '</div>';
+    html += '</div>';
+    return html;
+  }
+
+  // ========== Build card HTML ==========
+
+  function buildCard(p) {
+    var syncTag = '<span class="tag tag-pending">待同步</span>';
+    if (p.sync_status === 'syncing') syncTag = '<span class="tag tag-syncing">同步中</span>';
+    else if (p.sync_status === 'synced') syncTag = '<span class="tag tag-synced">已同步</span>';
+
+    var deliveryTag = '<span class="tag tag-pending">待交付</span>';
+    if (p.delivery_status === 'delivered') deliveryTag = '<span class="tag tag-delivered">已交付</span>';
+    else if (p.delivery_status === 'delivering') deliveryTag = '<span class="tag tag-syncing">回传中</span>';
+    else if (p.delivery_status === 'partial') deliveryTag = '<span class="tag tag-partial">部分交付</span>';
+    else if (p.delivery_status === 'error') deliveryTag = '<span class="tag tag-error">回传失败</span>';
+
+    var special = p.is_special ? ' <span class="tag tag-special">特殊</span>' : '';
+    var progress = p.sync_progress
+      ? '<span class="progress-text">' + htm(p.sync_progress) + '</span>' : '';
+
+    var groupBadge = '';
+    if (p.project_type === 'group') {
+      groupBadge = p.has_production_match
+        ? ' <span class="tag tag-group">已在制作部</span>'
+        : ' <span class="tag tag-group">仅组内</span>';
+    } else if (p.on_group) {
+      groupBadge = ' <span class="tag tag-group">已在组盘</span>';
+    } else {
+      groupBadge = ' <span class="tag tag-nogroup">未拷贝</span>';
+    }
+
+    var cs = p.custom_status || '';
+    var isCompleted = cs === '已完成' || p.is_completed;
+    // group_path 有值时直接用 path 模式打开（不依赖 DB），避免已完成项目未登记 DB 导致失败
+    var openPath = p.group_path || p.production_path || '';
+    var openBtnAttrs = 'data-action="open-folder" data-project="' + htm(p.name) + '"';
+    if (openPath) openBtnAttrs += ' data-path="' + htm(openPath) + '"';
+    var openBtn = '<button class="btn btn-secondary btn-sm" ' + openBtnAttrs + '>打开路径</button>';
+    var actionsHtml = '';
+    var fileBtnLabel = '查看成片';
+    if (p.custom_status === '修改中') fileBtnLabel = '查看修改内容';
+    else if (p.custom_status === '待交付') fileBtnLabel = '查看交付文件';
+    if (isCompleted) {
+      // 已完成项目：查看交付文件（对应 000交付 目录）
+      actionsHtml =
+        '<button class="btn btn-secondary btn-sm" data-action="files" data-project="' + htm(p.name) + '">查看交付文件</button> '
+        + openBtn;
+    } else if (p.project_type === 'production') {
+      actionsHtml =
+        '<button class="btn btn-primary btn-sm" data-action="sync" data-project="' + htm(p.name) + '">同步素材</button> ' +
+        '<button class="btn btn-secondary btn-sm" data-action="files" data-project="' + htm(p.name) + '">' + fileBtnLabel + '</button> '
+        + openBtn;
+    } else {
+      // group projects on O-drive — only show output files
+      actionsHtml =
+        '<button class="btn btn-secondary btn-sm" data-action="files" data-project="' + htm(p.name) + '">' + fileBtnLabel + '</button> '
+        + openBtn;
+    }
+
+    // Custom status dropdown
+    var statusOptions = ['', '剪辑中', '审核中', '修改中', '待交付', '已完成'];
+    var statusHtml = '<div class="custom-status-row">'
+      + '<span class="custom-status-label">项目状态</span>'
+      + '<select class="custom-status-select status-' + htm(cs) + '" data-status-project="' + htm(p.name) + '">';
+    for (var si = 0; si < statusOptions.length; si++) {
+      var so = statusOptions[si];
+      statusHtml += '<option value="' + htm(so) + '"' + (so === cs ? ' selected' : '') + '>' + (so || '未设置') + '</option>';
+    }
+    statusHtml += '</select></div>';
+
+    var episodeHtml = '';
+    if (cs === '剪辑中') {
+      var totalEp = p.total_episodes || 0;
+      var currentEp = p.current_episodes || 0;
+      var epPct = totalEp > 0 ? Math.round(currentEp / totalEp * 100) : 0;
+      var epComplete = totalEp > 0 && currentEp >= totalEp;
+      episodeHtml = '<div class="episode-row" data-ep-project="' + htm(p.name) + '">'
+        + '<div class="episode-inputs">'
+        + '<span class="episode-label">集数</span>'
+        + '<input type="number" class="ep-input" data-field="total" value="' + totalEp + '" min="0" placeholder="总集数">'
+        + '<span class="ep-sep">集 / 已输出</span>'
+        + '<input type="number" class="ep-input" data-field="current" value="' + currentEp + '" min="0" placeholder="当前">'
+        + '<span class="ep-sep">集</span>'
+        + '<button class="ep-btn ep-btn-primary" data-action="ep-save" data-project="' + htm(p.name) + '">保存</button>'
+        + '<button class="ep-btn" data-action="ep-auto" data-project="' + htm(p.name) + '">统计</button>'
+        + '</div>'
+        + '<div class="ep-bar"><div class="ep-fill' + (epComplete ? ' complete' : '') + '" style="width:' + epPct + '%"></div></div>'
+        + '<span class="ep-text' + (epComplete ? ' complete' : '') + '">' + currentEp + '/' + totalEp + ' (' + epPct + '%)' + (epComplete ? ' ✅' : '') + '</span>'
+        + '</div>';
+    } else if (cs === '待交付') {
+      episodeHtml = buildCardDeliveryBar(p);
+    }
+
+    return '<div class="project-card' + (isCompleted ? ' card-completed' : '') + '">'
+      + '<div class="card-top">'
+      + '<div class="name">' + htm(p.name) + special + groupBadge + '</div>'
+      + '</div>'
+      + statusHtml
+      + episodeHtml
+      + '<div class="status-row">'
+      + '<div class="status-item"><div class="status-label">素材同步</div><div class="status-value">' + syncTag + progress + '</div></div>'
+      + '<div class="status-item"><div class="status-label">成片交付</div><div class="status-value">' + deliveryTag + '</div></div>'
+      + '</div>'
+      + '<div class="time-row">同步: ' + htm(p.last_synced_at || '从未') + '<br>交付: ' + htm(p.last_delivered_at || '从未') + '</div>'
+      + '<div class="card-actions">' + actionsHtml + '</div>'
+      + '</div>';
+  }
+
+  // ========== Render all ==========
+
+  function naturalCompare(a, b) {
+    a = String(a || ''); b = String(b || '');
+    var i = 0, j = 0;
+    while (i < a.length && j < b.length) {
+      var ca = a.charCodeAt(i), cb = b.charCodeAt(j);
+      if (ca >= 48 && ca <= 57 && cb >= 48 && cb <= 57) {
+        // Both are digits - extract full number
+        var na = '', nb = '';
+        while (i < a.length && a.charCodeAt(i) >= 48 && a.charCodeAt(i) <= 57) { na += a[i]; i++; }
+        while (j < b.length && b.charCodeAt(j) >= 48 && b.charCodeAt(j) <= 57) { nb += b[j]; j++; }
+        var diff = parseFloat(na) - parseFloat(nb);
+        if (diff !== 0) return diff < 0 ? -1 : 1;
+      } else {
+        var la = ca >= 65 && ca <= 90 ? ca + 32 : ca;
+        var lb = cb >= 65 && cb <= 90 ? cb + 32 : cb;
+        if (la !== lb) return la - lb;
+        i++; j++;
+      }
+    }
+    return (a.length - i) - (b.length - j);
+  }
+
+  function updateDepartmentFilter() {
+    var depts = {};
+    for (var i = 0; i < allData.production.length; i++) {
+      var d = allData.production[i].department || '';
+      if (d) depts[d] = true;
+    }
+    for (var i = 0; i < allData.group_all.length; i++) {
+      var d = allData.group_all[i].source_department || '';
+      if (d) depts[d] = true;
+    }
+    var deptList = Object.keys(depts).sort(function(a, b) { return naturalCompare(a, b); });
+    var select = document.getElementById('filter-department');
+    var currentVal = select.value;
+    var html = '<option value="">全部</option>';
+    for (var i = 0; i < deptList.length; i++) {
+      html += '<option value="' + htm(deptList[i]) + '">' + htm(deptList[i]) + '</option>';
+    }
+    html += '<option value="none">未关联制作部</option>';
+    select.innerHTML = html;
+    // 保持之前的选择
+    if (currentVal) select.value = currentVal;
+  }
+
+  function sortProjects(list) {
+    if (sortMode === 'name') {
+      list.sort(function(a, b) { return naturalCompare(a.name, b.name); });
+    } else if (sortMode === 'delivery') {
+      list.sort(function(a, b) {
+        var oa = deliveryOrder[a.delivery_status] || 99;
+        var ob = deliveryOrder[b.delivery_status] || 99;
+        if (oa !== ob) return oa - ob;
+        return naturalCompare(a.name, b.name);
+      });
+    } else if (sortMode === 'delivered_time') {
+      list.sort(function(a, b) {
+        var da = a.last_delivered_at || '';
+        var db = b.last_delivered_at || '';
+        if (da === db) return naturalCompare(a.name, b.name);
+        if (!da) return 1;
+        if (!db) return -1;
+        return da < db ? 1 : -1; // 最近的排前面
+      });
+    } else if (sortMode === 'custom_status') {
+      list.sort(function(a, b) {
+        var sa = a.custom_status || '';
+        var sb = b.custom_status || '';
+        // 未设置状态的项目排最后
+        if (!sa && !sb) return naturalCompare(a.name, b.name);
+        if (!sa) return 1;
+        if (!sb) return -1;
+        var oa = customStatusOrder[sa] !== undefined ? customStatusOrder[sa] : 99;
+        var ob = customStatusOrder[sb] !== undefined ? customStatusOrder[sb] : 99;
+        if (oa !== ob) return oa - ob;
+        return naturalCompare(a.name, b.name);
+      });
+    } else if (sortMode === 'created_at') {
+      list.sort(function(a, b) {
+        var da = a.created_at || '';
+        var db = b.created_at || '';
+        if (da === db) return naturalCompare(a.name, b.name);
+        if (!da) return 1;
+        if (!db) return -1;
+        return da < db ? 1 : -1; // 最新的排前面
+      });
+    } else if (sortMode === 'department') {
+      list.sort(function(a, b) {
+        var da = (a.source_department || a.department || '').toString();
+        var db = (b.source_department || b.department || '').toString();
+        if (da === db) return naturalCompare(a.name, b.name);
+        return naturalCompare(da, db);
+      });
+    }
+  }
+
+  function matchFilter(p) {
+    if (filterDelivery && p.delivery_status !== filterDelivery) return false;
+    if (filterGroup === 'on_group' && !p.on_group) return false;
+    if (filterGroup === 'not_group' && p.on_group) return false;
+    if (filterCustomStatus) {
+      var cs = p.custom_status || '';
+      if (filterCustomStatus === 'none') {
+        if (cs) return false;
+      } else {
+        if (cs !== filterCustomStatus) return false;
+      }
+    }
+    if (filterDepartment) {
+      var dept = p.source_department || p.department || '';
+      if (filterDepartment === 'none') {
+        if (dept && dept !== '组内NAS') return false;
+      } else {
+        if (dept !== filterDepartment) return false;
+      }
+    }
+    return true;
+  }
+
+  function renderAll() {
+    var keyword = (document.getElementById('search').value || '').trim().toLowerCase();
+
+    // Filter + search
+    var filteredProduction = [];
+    var filteredGroupOnly = [];
+    var filteredCompleted = [];
+
+    for (var i = 0; i < allData.production.length; i++) {
+      var p = allData.production[i];
+      if ((!keyword || p.name.toLowerCase().indexOf(keyword) !== -1) && matchFilter(p)) {
+        filteredProduction.push(p);
+      }
+    }
+    for (var i = 0; i < allData.group_all.length; i++) {
+      var p = allData.group_all[i];
+      if ((!keyword || p.name.toLowerCase().indexOf(keyword) !== -1) && matchFilter(p)) {
+        filteredGroupOnly.push(p);
+      }
+    }
+    for (var i = 0; i < allData.group_completed.length; i++) {
+      var p = allData.group_completed[i];
+      if ((!keyword || p.name.toLowerCase().indexOf(keyword) !== -1) && matchFilter(p)) {
+        filteredCompleted.push(p);
+      }
+    }
+
+    // Stats
+    var total = allData.production.length + allData.group_all.length + allData.group_completed.length;
+    var shown = filteredProduction.length + filteredGroupOnly.length + filteredCompleted.length;
+    var hasFilter = keyword || filterDelivery || filterGroup || filterCustomStatus || filterDepartment;
+    document.getElementById('search-stats').textContent =
+      (hasFilter ? '匹配 ' + shown + ' / ' : '共 ') + total + ' 个项目' +
+      '（制作部 ' + allData.production.length + ' + 组内NAS ' + allData.group_all.length
+      + ' + 已完成 ' + allData.group_completed.length + '）';
+
+    // Sort
+    sortProjects(filteredProduction);
+    sortProjects(filteredGroupOnly);
+    sortProjects(filteredCompleted);
+
+    // Group production by department
+    var deptGroups = {};
+    for (var i = 0; i < filteredProduction.length; i++) {
+      var d = filteredProduction[i].department || '其他';
+      if (!deptGroups[d]) deptGroups[d] = [];
+      deptGroups[d].push(filteredProduction[i]);
+    }
+
+    var html = '';
+
+    // -- Group-only section FIRST (at top) --
+    if (filteredGroupOnly.length > 0 || !keyword) {
+      var gCollapsed = '__group__' in collapsedDepts ? collapsedDepts['__group__'] : false;
+      html += '<div class="dept-section">'
+        + '<div class="dept-header" data-dept="__group__">'
+        + '<span class="dept-arrow' + (gCollapsed ? ' collapsed' : '') + '">&#9660;</span>'
+        + '<span class="dept-name">组内NAS</span>'
+        + '<span class="dept-badge dept-badge-group">' + filteredGroupOnly.length + ' 个项目</span>'
+        + '</div>'
+        + '<div class="dept-body' + (gCollapsed ? ' hidden' : '') + '" data-dept-body="__group__">';
+      if (filteredGroupOnly.length === 0 && hasFilter) {
+        html += '<div class="empty" style="grid-column:1/-1"><div style="font-size:13px">没有匹配的项目</div></div>';
+      } else {
+        for (var k = 0; k < filteredGroupOnly.length; k++) {
+          html += buildCard(filteredGroupOnly[k]);
+        }
+      }
+      html += '</div></div>';
+    }
+
+    // -- Production sections by department --
+    var deptKeys = Object.keys(deptGroups).sort();
+    for (var di = 0; di < deptKeys.length; di++) {
+      var dept = deptKeys[di];
+      var items = deptGroups[dept];
+      var collapsed = dept in collapsedDepts ? collapsedDepts[dept] : true;
+      html += '<div class="dept-section">'
+        + '<div class="dept-header" data-dept="' + htm(dept) + '">'
+        + '<span class="dept-arrow' + (collapsed ? ' collapsed' : '') + '">&#9660;</span>'
+        + '<span class="dept-name">' + htm(dept) + '</span>'
+        + '<span class="dept-badge">' + items.length + ' 个项目</span>'
+        + '</div>'
+        + '<div class="dept-body' + (collapsed ? ' hidden' : '') + '" data-dept-body="' + htm(dept) + '">';
+      for (var j = 0; j < items.length; j++) {
+        html += buildCard(items[j]);
+      }
+      html += '</div></div>';
+    }
+
+    if (deptKeys.length === 0 && !keyword && !filterDelivery && !filterGroup && !filterCustomStatus && !filterDepartment) {
+      html += '<div class="empty"><div class="empty-icon">&#128193;</div><div>暂无制作部项目，点击右上角"刷新项目"扫描 NAS</div></div>';
+    }
+
+    // -- Completed section (always shown, default collapsed) --
+    if (filteredCompleted.length > 0 || !keyword) {
+      var cCollapsed = '__completed__' in collapsedDepts ? collapsedDepts['__completed__'] : true;
+      html += '<div class="dept-section dept-completed">'
+        + '<div class="dept-header" data-dept="__completed__">'
+        + '<span class="dept-arrow' + (cCollapsed ? ' collapsed' : '') + '">&#9660;</span>'
+        + '<span class="dept-name">已完成项目</span>'
+        + '<span class="dept-badge dept-badge-completed">' + filteredCompleted.length + ' 个项目</span>'
+        + '</div>'
+        + '<div class="dept-body' + (cCollapsed ? ' hidden' : '') + '" data-dept-body="__completed__">';
+      if (filteredCompleted.length === 0 && hasFilter) {
+        html += '<div class="empty" style="grid-column:1/-1"><div style="font-size:13px">没有匹配的项目</div></div>';
+      } else {
+        for (var k = 0; k < filteredCompleted.length; k++) {
+          html += buildCard(filteredCompleted[k]);
+        }
+      }
+      html += '</div></div>';
+    }
+
+    if (deptKeys.length === 0 && filteredGroupOnly.length === 0 && filteredCompleted.length === 0 && (keyword || filterDelivery || filterGroup || filterCustomStatus || filterDepartment)) {
+      html += '<div class="empty"><div class="empty-icon">&#128269;</div><div>没有找到匹配的项目</div></div>';
+    }
+
+    document.getElementById('project-sections').innerHTML = html;
+  }
+
+  // ========== Load ==========
+
+  function loadProjects() {
+    api('GET', '/api/projects').then(function(data) {
+      allData = data;
+      updateDepartmentFilter();
+      try {
+        renderAll();
+      } catch(e) {
+        console.error('renderAll error:', e);
+        document.getElementById('project-sections').innerHTML =
+          '<div class="empty"><div class="empty-icon">⚠️</div>' +
+          '<div>渲染失败: ' + htm(e.message) + '</div>' +
+          '<div style="font-size:12px;margin-top:8px;color:#86868b">' + htm(e.stack || '') + '</div></div>';
+      }
+    }).catch(function(e) {
+      console.error('loadProjects error:', e);
+      document.getElementById('project-sections').innerHTML =
+        '<div class="empty"><div class="empty-icon">⚠️</div>' +
+        '<div>加载失败: ' + htm(String(e)) + '</div>' +
+        '<div style="font-size:12px;margin-top:8px;color:#86868b">请检查服务是否正常运行</div></div>';
+    });
+  }
+
+  // ========== Scan ==========
+
+  function scanProjects() {
+    showToast('正在扫描所有 NAS 源...');
+    api('POST', '/api/scan').then(function(data) {
+      if (data.ok) {
+        showToast('扫描完成：制作部 ' + data.count + ' 个项目');
+        loadProjects();
+      } else {
+        showToast('扫描失败: ' + (data.message || '未知错误'));
+      }
+    }).catch(function() { showToast('扫描失败，请检查 NAS 连接'); });
+  }
+
+  // ========== Sync ==========
+
+  function openProjectFolder(name, fullPath) {
+    var postData;
+    if (fullPath) {
+      postData = { which: 'path', path: fullPath };
+    } else {
+      postData = { which: 'project' };
+    }
+    api('POST', '/api/project/' + encodeURIComponent(name) + '/open_folder', postData).then(function(data) {
+      if (data.ok) showToast(data.message || '已打开');
+      else showToast(data.message || '打开失败');
+    }).catch(function() { showToast('打开失败'); });
+  }
+
+  function syncProject(name) {
+    if (!confirm('确认要将"' + name + '"完整同步到组内 NAS 吗？\n\n这会拷贝整个项目目录，耗时取决于项目大小。')) return;
+    showToast('同步已启动...');
+    api('POST', '/api/sync/' + encodeURIComponent(name)).then(function() {
+      showToast('素材同步已启动，请稍后查看状态');
+      setTimeout(loadProjects, 3000);
+    }).catch(function() { showToast('操作失败'); });
+  }
+
+  // ========== Files modal ==========
+
+  var batchTimer = null;
+  var batchProject = '';
+  var batchRevFolder = '';
+  var currentMode = 'editing';
+  var currentSubpath = '';
+  var currentProjectData = null;
+
+  function findProject(name) {
+    for (var i = 0; i < allData.production.length; i++) {
+      if (allData.production[i].name === name) return allData.production[i];
+    }
+    for (var i = 0; i < allData.group_all.length; i++) {
+      if (allData.group_all[i].name === name) return allData.group_all[i];
+    }
+    if (allData.group_completed) {
+      for (var i = 0; i < allData.group_completed.length; i++) {
+        if (allData.group_completed[i].name === name) return allData.group_completed[i];
+      }
+    }
+    return null;
+  }
+
+  function showFiles(name) {
+    currentProject = name;
+    currentSubpath = '';
+    currentProjectData = findProject(name);
+
+    // Determine mode based on custom_status
+    var status = currentProjectData ? (currentProjectData.custom_status || '') : '';
+    var isCompletedNow = status === '已完成' || (currentProjectData && currentProjectData.is_completed);
+    if (status === '修改中') {
+      currentMode = 'revising';
+    } else if (status === '待交付') {
+      currentMode = 'delivery';
+    } else if (isCompletedNow) {
+      // 已完成项目 → 直接浏览 000交付 目录
+      currentMode = 'delivery';
+    } else {
+      currentMode = 'editing';
+    }
+
+    // Set modal title with mode badge
+    var modeLabels = { editing: '成片文件', revising: '修改文件', delivery: '交付文件夹' };
+    var modeBadges = { editing: '剪辑中', revising: '修改中', delivery: isCompletedNow ? '已完成' : '待交付' };
+    document.getElementById('modal-title').innerHTML = htm(name) + ' - ' + modeLabels[currentMode]
+      + ' <span class="mode-badge ' + currentMode + '">' + modeBadges[currentMode] + '</span>';
+
+    document.getElementById('modal').classList.add('active');
+    document.getElementById('modal-extra').style.display = 'none';
+    document.getElementById('modal-toolbar').style.display = 'none';
+    document.getElementById('batch-progress').style.display = 'none';
+    document.getElementById('batch-result-actions').style.display = 'none';
+    document.getElementById('progress-fill').style.background = '#0071e3';
+    document.getElementById('select-all').checked = false;
+    stopBatchPolling();
+
+    loadFilesByMode();
+  }
+
+  function loadFilesByMode() {
+    var url = '/api/output_files/' + encodeURIComponent(currentProject) + '?mode=' + currentMode;
+    if (currentSubpath) {
+      url += '&subpath=' + encodeURIComponent(currentSubpath);
+    }
+    document.getElementById('file-list').innerHTML = '<li class="loading">加载中...</li>';
+
+    api('GET', url).then(function(data) {
+      if (currentMode === 'delivery') {
+        renderDeliveryBrowser(data);
+      } else if (currentMode === 'revising') {
+        // revising: 无 subpath 显示修改文件夹列表（浏览器）；有 subpath 显示文件列表（带回传）
+        if (!currentSubpath && data.folders && data.folders.length > 0) {
+          renderDeliveryBrowser(data);
+        } else {
+          // 显示面包屑
+          var bcHtml = '<div class="breadcrumb-bar">';
+          var bcs = data.breadcrumbs || [];
+          for (var i = 0; i < bcs.length; i++) {
+            if (i > 0) bcHtml += '<span class="breadcrumb-sep">/</span>';
+            if (i === bcs.length - 1) {
+              bcHtml += '<span class="breadcrumb-current">' + htm(bcs[i].name) + '</span>';
+            } else {
+              bcHtml += '<span class="breadcrumb-item" data-nav-path="' + htm(bcs[i].path || '') + '">' + htm(bcs[i].name) + '</span>';
+            }
+          }
+          bcHtml += '</div>';
+          var extra = document.getElementById('modal-extra');
+          extra.innerHTML = bcHtml;
+          extra.style.display = 'block';
+
+          renderFileList(data.files || []);
+        }
+      } else {
+        // Show episode info for editing mode
+        if (currentMode === 'editing' && currentProjectData) {
+          var totalEp = currentProjectData.total_episodes || 0;
+          var currentEp = currentProjectData.current_episodes || 0;
+          if (totalEp > 0) {
+            var pct = Math.round(currentEp / totalEp * 100);
+            var complete = currentEp >= totalEp;
+            var extraHtml = '<div class="modal-episode-bar">'
+              + '<div class="progress-bar"><div class="modal-ep-fill" style="width:' + pct + '%; background:' + (complete ? '#34c759' : '#0071e3') + '"></div></div>'
+              + '<span class="progress-text">集数进度: ' + currentEp + '/' + totalEp + ' (' + pct + '%)' + (complete ? ' ✅ 已完成' : '') + '</span>'
+              + '</div>';
+            var extra = document.getElementById('modal-extra');
+            extra.innerHTML = extraHtml;
+            extra.style.display = 'block';
+          }
+        }
+        renderFileList(data);
+      }
+    }).catch(function() {
+      document.getElementById('file-list').innerHTML = '<li class="loading">加载失败</li>';
+    });
+  }
+
+  function renderFileList(files) {
+    var list = document.getElementById('file-list');
+    var toolbar = document.getElementById('modal-toolbar');
+    document.getElementById('file-count').textContent = '共 ' + files.length + ' 个文件';
+
+    if (!files.length) {
+      list.innerHTML = '<li style="padding:24px;text-align:center;color:#86868b;font-size:13px">暂无文件</li>';
+      toolbar.style.display = 'none';
+      return;
+    }
+
+    toolbar.style.display = 'flex';
+    var deliverLabel = currentMode === 'revising' ? '修改回传' : '回传';
+    document.getElementById('btn-batch-deliver').textContent = '批量' + deliverLabel;
+    var html = '';
+    for (var i = 0; i < files.length; i++) {
+      var f = files[i];
+      var isVideo = ['.mp4', '.mkv', '.avi', '.mov', '.webm', '.flv', '.wmv', '.m4v'].indexOf(f.ext.toLowerCase()) !== -1;
+      var nameHtml = isVideo
+        ? '<div class="file-name clickable" data-preview="' + htm(f.name) + '">' + htm(f.name) + '</div>'
+        : '<div class="file-name">' + htm(f.name) + '</div>';
+      html += '<li class="file-item">'
+        + '<input type="checkbox" class="file-checkbox" data-fname="' + htm(f.name) + '" onchange="updateBatchButton()">'
+        + '<div class="file-info">'
+        + nameHtml
+        + '<div class="file-meta">' + f.size_mb + ' MB | ' + htm(f.ext) + ' | ' + htm(f.mtime) + (f.parent_dir ? ' | ' + htm(f.parent_dir) : '') + '</div>'
+        + '</div>'
+        + (isVideo ? '<button class="btn btn-secondary btn-sm" data-action="preview" data-project="' + htm(f.name) + '">预览</button> ' : '')
+        + '<button class="btn btn-primary btn-sm" data-action="deliver" data-project="' + htm(f.name) + '">' + deliverLabel + '</button>'
+        + '</li>';
+    }
+    list.innerHTML = html;
+    updateBatchButton();
+  }
+
+  function buildDeliveryProgressPanel(data) {
+    var folders = data.folders || [];
+    var totalEpisodes = data.total_episodes || 0;
+    var screenshotExpected = data.screenshot_expected || 5;
+
+    var expectedItems = [
+      { standard: '00成片', keywords: ['成片'], type: 'episode' },
+      { standard: '有音乐无字幕版本', keywords: ['有音乐'], type: 'episode' },
+      { standard: '无音乐无bgm版本', keywords: ['无音乐', '无bgm'], type: 'episode' },
+      { standard: '字幕文件', keywords: ['字幕'], exclude: ['无字幕'], type: 'episode' },
+      { standard: '工程截图', keywords: ['截图'], type: 'screenshot' },
+    ];
+
+    var matchedCounts = {};
+    for (var ei = 0; ei < expectedItems.length; ei++) {
+      matchedCounts[ei] = { current: 0, found: false };
+    }
+    for (var fi = 0; fi < folders.length; fi++) {
+      var name = folders[fi].name;
+      var low = name.toLowerCase();
+      var matched = -1;
+      for (var ei2 = 0; ei2 < expectedItems.length; ei2++) {
+        var rule = expectedItems[ei2];
+        var skip = false;
+        if (rule.exclude) {
+          for (var exi = 0; exi < rule.exclude.length; exi++) {
+            if (low.indexOf(rule.exclude[exi]) !== -1) { skip = true; break; }
+          }
+        }
+        if (skip) continue;
+        for (var ki = 0; ki < rule.keywords.length; ki++) {
+          if (low.indexOf(rule.keywords[ki]) !== -1) { matched = ei2; break; }
+        }
+        if (matched !== -1) break;
+      }
+      if (matched !== -1) {
+        matchedCounts[matched].current = folders[fi].file_count || 0;
+        matchedCounts[matched].found = true;
+        matchedCounts[matched].folderPath = folders[fi].path;
+        matchedCounts[matched].folderName = name;
+      }
+    }
+
+    var html = '<div class="delivery-progress-panel">';
+    html += '<div class="delivery-progress-header">';
+    html += '<span class="delivery-progress-title">📦 交付进度</span>';
+    html += '<span class="delivery-ep-edit">';
+    html += ' 总集数: <input type="number" id="dlv-total-ep" class="ep-input" style="width:56px;padding:2px 4px;font-size:12px" min="0" value="' + totalEpisodes + '"> 集 ';
+    html += '<button class="ep-btn ep-btn-primary" onclick="saveDeliveryEpisodes()" style="padding:2px 8px;font-size:12px">保存</button>';
+    html += '<button class="ep-btn" onclick="autoCountDeliveryEpisodes()" style="padding:2px 8px;font-size:12px">统计</button>';
+    html += '</span>';
+    html += '</div>';
+
+    for (var i = 0; i < expectedItems.length; i++) {
+      var rule = expectedItems[i];
+      var mc = matchedCounts[i];
+      var total = rule.type === 'screenshot' ? screenshotExpected : totalEpisodes;
+      var cur = mc.current;
+      var pct = total > 0 ? Math.round(cur / total * 100) : 0;
+      var complete = total > 0 && cur >= total;
+      var missing = !mc.found;
+
+      html += '<div class="delivery-progress-row" style="opacity:' + (missing ? '0.45' : '1') + '">';
+      html += '<div class="delivery-progress-name">';
+      html += (mc.found
+        ? '<a href="javascript:navigateFolder(\'' + htm(mc.folderPath) + '\')" class="delivery-folder-link">' + htm(mc.folderName) + '</a>'
+        : '<span style="color:#999">' + htm(rule.standard) + '（未找到）</span>');
+      html += '</div>';
+      html += '<div class="progress-bar" style="flex:1;margin:0 10px"><div class="progress-fill' + (complete ? ' complete' : '') + '" style="width:' + pct + '%;background:' + (complete ? '#34c759' : '#0071e3') + '"></div></div>';
+      html += '<div class="delivery-progress-count">' + cur + '/' + total + ' <span style="color:#999;font-size:11px">(' + pct + '%)</span>' + (complete ? ' ✅' : '') + '</div>';
+      html += '</div>';
+    }
+    html += '</div>';
+    return html;
+  }
+
+  function saveDeliveryEpisodes() {
+    var input = document.getElementById('dlv-total-ep');
+    if (!input) return;
+    var total = parseInt(input.value) || 0;
+    api('POST', '/api/project/' + encodeURIComponent(currentProject) + '/episodes', {
+      total: total, current: 0
+    }).then(function(r) {
+      showToast(r.message || '集数已更新');
+      api('GET', '/api/projects').then(function(d) {
+        allData = d;
+        renderAll();
+        // 更新当前项目引用数据
+        currentProjectData = findProject(currentProject);
+        // 刷新 delivery 面板
+        loadFilesByMode();
+      });
+    });
+  }
+
+  function autoCountDeliveryEpisodes() {
+    api('GET', '/api/project/' + encodeURIComponent(currentProject) + '/auto_count').then(function(r) {
+      if (r.ok) {
+        var input = document.getElementById('dlv-total-ep');
+        if (input) input.value = r.count;
+        showToast('自动统计到 ' + r.count + ' 集');
+      }
+    });
+  }
+
+  function renderDeliveryBrowser(data) {
+    var list = document.getElementById('file-list');
+    var extra = document.getElementById('modal-extra');
+    var folders = data.folders || [];
+    var files = data.files || [];
+
+    // 是否显示文件夹 checkbox（revising 模式根目录 + 有文件夹时）
+    var showFolderCheckbox = currentMode === 'revising' && !currentSubpath && folders.length > 0;
+
+    if (showFolderCheckbox) {
+      var toolbar = document.getElementById('modal-toolbar');
+      toolbar.style.display = 'flex';
+      document.getElementById('file-count').textContent = '共 ' + folders.length + ' 个修改文件夹';
+      document.getElementById('btn-batch-deliver').textContent = '批量回传文件夹';
+      document.getElementById('btn-batch-deliver').disabled = true;
+      document.getElementById('select-all').checked = false;
+    } else {
+      document.getElementById('modal-toolbar').style.display = 'none';
+    }
+
+    // Build breadcrumb
+    var bcHtml = '<div class="breadcrumb-bar">';
+    var bcs = data.breadcrumbs || [];
+    for (var i = 0; i < bcs.length; i++) {
+      if (i > 0) bcHtml += '<span class="breadcrumb-sep">/</span>';
+      if (i === bcs.length - 1) {
+        bcHtml += '<span class="breadcrumb-current">' + htm(bcs[i].name) + '</span>';
+      } else {
+        bcHtml += '<span class="breadcrumb-item" data-nav-path="' + htm(bcs[i].path || '') + '">' + htm(bcs[i].name) + '</span>';
+      }
+    }
+    bcHtml += '</div>';
+    if (currentMode === 'delivery' && !currentSubpath) {
+      bcHtml += buildDeliveryProgressPanel(data);
+    }
+    extra.innerHTML = bcHtml;
+    extra.style.display = 'block';
+
+    if (!folders.length && !files.length) {
+      list.innerHTML = '<li style="padding:24px;text-align:center;color:#86868b;font-size:13px">文件夹为空</li>';
+      return;
+    }
+
+    var html = '';
+    // Back button (if not at root)
+    if (currentSubpath) {
+      html += '<div class="folder-item" data-nav-back="1"><span class="folder-icon">📁</span><span class="folder-name">.. 返回上层</span></div>';
+    }
+    // Folders
+    for (var i = 0; i < folders.length; i++) {
+      var fName = folders[i].name;
+      html += '<div class="folder-item" data-nav-folder="' + htm(folders[i].path) + '">';
+      if (showFolderCheckbox) {
+        html += '<input type="checkbox" class="folder-checkbox" data-folder="' + htm(fName) + '" onclick="event.stopPropagation()" onchange="updateBatchButton()">';
+      }
+      html += '<span class="folder-icon">📁</span>'
+        + '<span class="folder-name">' + htm(fName) + '</span>'
+        + '</div>';
+    }
+    // Files
+    for (var i = 0; i < files.length; i++) {
+      var f = files[i];
+      var isVideo = ['.mp4', '.mkv', '.avi', '.mov', '.webm', '.flv', '.wmv', '.m4v'].indexOf(f.ext.toLowerCase()) !== -1;
+      var nameHtml = isVideo
+        ? '<div class="file-name clickable" data-preview="' + htm(f.name) + '" data-preview-subpath="' + htm(currentSubpath) + '">' + htm(f.name) + '</div>'
+        : '<div class="file-name">' + htm(f.name) + '</div>';
+      html += '<div class="delivery-file-item">'
+        + '<div class="file-info">'
+        + nameHtml
+        + '<div class="file-meta">' + f.size_mb + ' MB | ' + htm(f.ext) + ' | ' + htm(f.mtime) + '</div>'
+        + '</div>'
+        + (isVideo ? '<button class="btn btn-secondary btn-sm" data-action="preview" data-project="' + htm(f.name) + '" data-subpath="' + htm(currentSubpath) + '">预览</button>' : '')
+        + '</div>';
+    }
+    list.innerHTML = html;
+  }
+
+  function navigateFolder(path) {
+    currentSubpath = path || '';
+    loadFilesByMode();
+  }
+
+  function navigateBack() {
+    if (!currentSubpath) return;
+    var parts = currentSubpath.replace(/\\/g, '/').split('/').filter(Boolean);
+    parts.pop();
+    currentSubpath = parts.join('\\');
+    loadFilesByMode();
+  }
+
+  function toggleSelectAll() {
+    var checked = document.getElementById('select-all').checked;
+    var folderBoxes = document.querySelectorAll('.folder-checkbox');
+    var boxes = folderBoxes.length > 0 ? folderBoxes : document.querySelectorAll('.file-checkbox');
+    for (var i = 0; i < boxes.length; i++) { boxes[i].checked = checked; }
+    updateBatchButton();
+  }
+
+  function updateBatchButton() {
+    var folderBoxes = document.querySelectorAll('.folder-checkbox:checked');
+    var fileBoxes = document.querySelectorAll('.file-checkbox:checked');
+    var btn = document.getElementById('btn-batch-deliver');
+    if (folderBoxes.length > 0 || document.querySelectorAll('.folder-checkbox').length > 0) {
+      // 文件夹模式
+      var allFolders = document.querySelectorAll('.folder-checkbox');
+      var checked = folderBoxes.length;
+      btn.textContent = checked ? '批量回传文件夹 (' + checked + ')' : '批量回传文件夹';
+      btn.disabled = checked === 0;
+      if (checked > 0 && checked === allFolders.length) {
+        document.getElementById('select-all').checked = true;
+      } else {
+        document.getElementById('select-all').checked = false;
+      }
+    } else {
+      // 文件模式
+      var checkedFiles = fileBoxes.length;
+      var label = currentMode === 'revising' ? '修改回传' : '批量回传';
+      btn.textContent = checkedFiles ? label + ' (' + checkedFiles + ')' : label;
+      btn.disabled = !checkedFiles;
+      var allFiles = document.querySelectorAll('.file-checkbox');
+      if (checkedFiles > 0 && checkedFiles === allFiles.length) {
+        document.getElementById('select-all').checked = true;
+      } else {
+        document.getElementById('select-all').checked = false;
+      }
+    }
+  }
+
+  function batchDeliver() {
+    // 优先检查文件夹模式
+    var folderBoxes = document.querySelectorAll('.folder-checkbox:checked');
+    if (folderBoxes.length > 0) {
+      var folderNames = [];
+      for (var i = 0; i < folderBoxes.length; i++) { folderNames.push(folderBoxes[i].getAttribute('data-folder')); }
+
+      if (!confirm('确认批量回传 ' + folderNames.length + ' 个修改文件夹到制作部 NAS ？\n\n每个文件夹内的所有文件都会被复制。')) return;
+
+      batchProject = currentProject;
+      batchRevFolder = folderNames.length === 1 ? folderNames[0] : folderNames.join('; ');
+      document.getElementById('batch-progress').style.display = 'block';
+      document.getElementById('progress-fill').style.width = '0%';
+      document.getElementById('progress-fill').style.background = '#0071e3';
+      document.getElementById('progress-text').textContent = '准备中...';
+      document.getElementById('batch-result-actions').style.display = 'none';
+      document.getElementById('btn-batch-deliver').disabled = true;
+
+      api('POST', '/api/deliver_revision_folders/' + encodeURIComponent(batchProject), { folder_names: folderNames }).then(function(data) {
+        if (!data.ok) { showToast(data.message || '失败'); return; }
+        showToast(data.message + ' (' + data.total + ' 个文件夹)');
+        startBatchPolling();
+      }).catch(function() { showToast('操作失败'); });
+      return;
+    }
+
+    // 文件模式（原有逻辑）
+    var boxes = document.querySelectorAll('.file-checkbox:checked');
+    if (!boxes.length) return;
+    var names = [];
+    for (var i = 0; i < boxes.length; i++) { names.push(boxes[i].getAttribute('data-fname')); }
+
+    var confirmLabel = currentMode === 'revising' ? '修改回传' : '批量回传';
+    if (!confirm('确认' + confirmLabel + ' ' + names.length + ' 个文件到制作部 NAS ？')) return;
+
+    batchProject = currentProject;
+    batchRevFolder = currentMode === 'revising' ? currentSubpath : '';
+    document.getElementById('batch-progress').style.display = 'block';
+    document.getElementById('progress-fill').style.width = '0%';
+    document.getElementById('progress-fill').style.background = '#0071e3';
+    document.getElementById('progress-text').textContent = '准备中...';
+    document.getElementById('batch-result-actions').style.display = 'none';
+    document.getElementById('btn-batch-deliver').disabled = true;
+
+    var url;
+    var postData;
+    if (currentMode === 'revising') {
+      url = '/api/deliver_revision/' + encodeURIComponent(batchProject);
+      postData = { file_names: names, rev_folder_name: currentSubpath || null };
+    } else {
+      url = '/api/deliver_batch/' + encodeURIComponent(batchProject);
+      postData = { file_names: names };
+    }
+    api('POST', url, postData).then(function(data) {
+      if (!data.ok) { showToast(data.message || '失败'); return; }
+      showToast(data.message + ' (' + data.total + ' 个文件)');
+      startBatchPolling();
+    }).catch(function() { showToast('操作失败'); });
+  }
+
+  function startBatchPolling() {
+    stopBatchPolling();
+    batchTimer = setInterval(function() {
+      api('GET', '/api/project/' + encodeURIComponent(batchProject) + '/progress').then(function(data) {
+        if (!data.ok) return;
+        var pct = 0;
+        var m = (data.sync_progress || '').match(/回传(?:(?:文件夹|文件))?\s*(\d+)\/(\d+)/);
+        if (m) {
+          pct = Math.round(parseInt(m[1]) / parseInt(m[2]) * 100);
+          var isFolder = /文件夹/.test(data.sync_progress || '');
+          var label = isFolder ? '回传文件夹中' : '回传中';
+          document.getElementById('progress-fill').style.width = pct + '%';
+          document.getElementById('progress-text').textContent = label + ' ' + m[1] + ' / ' + m[2] + ' (' + pct + '%)';
+        }
+        if (!data.sync_progress && data.delivery_status === 'delivered') {
+          document.getElementById('progress-fill').style.width = '100%';
+          document.getElementById('progress-text').textContent = '✅ 全部回传完成';
+          stopBatchPolling();
+          showToast('回传完成');
+          showDeliveryResultActions();
+          loadProjects();
+        }
+        if (data.delivery_status === 'error') {
+          document.getElementById('progress-fill').style.width = '100%';
+          document.getElementById('progress-fill').style.background = '#ff3b30';
+          document.getElementById('progress-text').textContent = '❌ ' + (data.sync_progress || '全部回传失败');
+          stopBatchPolling();
+          showToast('回传失败');
+          updateBatchButton();
+          loadProjects();
+        }
+      });
+    }, 1500);
+  }
+
+  function showDeliveryResultActions() {
+    // 获取目标路径和源路径，显示按钮
+    var actionsDiv = document.getElementById('batch-result-actions');
+    var btnOpenDest = document.getElementById('btn-open-dest');
+    var btnCopyDest = document.getElementById('btn-copy-dest');
+    var btnOpenSource = document.getElementById('btn-open-source');
+    var btnCopySource = document.getElementById('btn-copy-source');
+
+    // 获取目标路径
+    api('GET', '/api/project/' + encodeURIComponent(batchProject) + '/dest_dir').then(function(data) {
+      if (data.ok) {
+        var destDir = data.dest_dir;
+        // 修改回传：目标路径精确到日期文件夹那一层
+        if (currentMode === 'revising' && batchRevFolder) {
+          // 文件夹批量回传多个时，取第一个；单文件/单文件夹回传就是完整的 rev folder
+          var firstRev = batchRevFolder.split(';')[0].trim();
+          destDir = destDir.replace(/[\\\/]+$/, '') + '\\' + firstRev;
+        }
+        btnOpenDest.style.display = '';
+        btnCopyDest.style.display = '';
+        btnOpenDest.onclick = function() {
+          var which = 'dest';
+          var sp = '';
+          if (currentMode === 'revising' && batchRevFolder) {
+            which = 'dest';
+            sp = batchRevFolder.split(';')[0].trim();
+          }
+          api('POST', '/api/project/' + encodeURIComponent(batchProject) + '/open_folder', { which: which, subpath: sp }).then(function(r) {
+            if (!r.ok) showToast('打开失败: ' + r.message);
+          });
+        };
+        btnCopyDest.onclick = function() {
+          copyToClipboard(destDir);
+        };
+      } else {
+        btnOpenDest.style.display = 'none';
+        btnCopyDest.style.display = 'none';
+      }
+    });
+
+    // 获取源路径
+    api('GET', '/api/project/' + encodeURIComponent(batchProject) + '/source_dir').then(function(data) {
+      if (data.ok) {
+        var sourceDir = data.source_dir;
+        btnOpenSource.style.display = '';
+        btnCopySource.style.display = '';
+        btnOpenSource.onclick = function() {
+          api('POST', '/api/project/' + encodeURIComponent(batchProject) + '/open_folder', { which: 'source' }).then(function(r) {
+            if (!r.ok) showToast('打开失败: ' + r.message);
+          });
+        };
+        btnCopySource.onclick = function() {
+          copyToClipboard(sourceDir);
+        };
+      } else {
+        btnOpenSource.style.display = 'none';
+        btnCopySource.style.display = 'none';
+      }
+    });
+
+    actionsDiv.style.display = 'flex';
+    updateBatchButton();
+  }
+
+  function copyToClipboard(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function() {
+        showToast('已复制: ' + text);
+      }).catch(function() {
+        fallbackCopy(text);
+      });
+    } else {
+      fallbackCopy(text);
+    }
+  }
+
+  function fallbackCopy(text) {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+      document.execCommand('copy');
+      showToast('已复制: ' + text);
+    } catch (e) {
+      showToast('复制失败，请手动复制: ' + text);
+    }
+    document.body.removeChild(ta);
+  }
+
+  function stopBatchPolling() {
+    if (batchTimer) { clearInterval(batchTimer); batchTimer = null; }
+  }
+
+  function deliverFile(fileName) {
+    var label = currentMode === 'revising' ? '修改回传' : '回传';
+    if (!confirm('确认将 "' + fileName + '" ' + label + '到制作部 NAS ？')) return;
+    showToast('正在' + label + '...');
+    if (currentMode === 'revising') {
+      api('POST', '/api/deliver_revision_single/' + encodeURIComponent(currentProject), { file_name: fileName, rev_folder_name: currentSubpath || null }).then(function(data) {
+        if (data.ok) {
+          document.getElementById('batch-progress').style.display = 'block';
+          document.getElementById('progress-fill').style.width = '100%';
+          document.getElementById('progress-fill').style.background = '#0071e3';
+          document.getElementById('progress-text').textContent = '✅ 修改回传成功: ' + fileName;
+          batchProject = currentProject;
+          batchRevFolder = currentSubpath || '';
+          showDeliveryResultActions();
+        } else {
+          showToast(data.message || '失败');
+        }
+        loadProjects();
+      }).catch(function() { showToast('操作失败'); });
+    } else {
+      api('POST', '/api/deliver/' + encodeURIComponent(currentProject), { file_path: fileName }).then(function(data) {
+        if (data.ok) {
+          document.getElementById('batch-progress').style.display = 'block';
+          document.getElementById('progress-fill').style.width = '100%';
+          document.getElementById('progress-fill').style.background = '#0071e3';
+          document.getElementById('progress-text').textContent = '✅ 回传成功: ' + fileName;
+          batchProject = currentProject;
+          batchRevFolder = '';
+          showDeliveryResultActions();
+        } else {
+          showToast('回传失败: ' + data.message);
+        }
+        loadProjects();
+      }).catch(function() { showToast('操作失败'); });
+    }
+  }
+
+  function closeModal() {
+    document.getElementById('modal').classList.remove('active');
+    stopBatchPolling();
+  }
+
+  // ========== Video preview ==========
+
+  function previewFile(fileName, subpath) {
+    var overlay = document.getElementById('preview-overlay');
+    var video = document.getElementById('preview-video');
+    var title = document.getElementById('preview-title');
+    title.textContent = fileName;
+    var url = '/api/preview/' + encodeURIComponent(currentProject) + '/' + encodeURIComponent(fileName) + '?mode=' + currentMode;
+    if (subpath) {
+      url += '&subpath=' + encodeURIComponent(subpath);
+    } else if (currentSubpath) {
+      url += '&subpath=' + encodeURIComponent(currentSubpath);
+    }
+    video.src = url;
+    overlay.classList.add('active');
+    video.play().catch(function() {});
+  }
+
+  function closePreview() {
+    var overlay = document.getElementById('preview-overlay');
+    var video = document.getElementById('preview-video');
+    video.pause();
+    video.src = '';
+    overlay.classList.remove('active');
+  }
+
+  // ========== Department collapse ==========
+
+  function toggleDept(dept) {
+    collapsedDepts[dept] = !collapsedDepts[dept];
+    var body = document.querySelector('[data-dept-body="' + dept.replace(/"/g, '\\"') + '"]');
+    var arrow = document.querySelector('[data-dept="' + dept.replace(/"/g, '\\"') + '"] .dept-arrow');
+    if (body) body.classList.toggle('hidden');
+    if (arrow) arrow.classList.toggle('collapsed');
+  }
+
+  // ========== Event delegation ==========
+
+  document.addEventListener('click', function(e) {
+    // Department header click
+    var hdr = e.target.closest('.dept-header');
+    if (hdr) {
+      toggleDept(hdr.getAttribute('data-dept'));
+      return;
+    }
+
+    // Folder navigation (in delivery browser)
+    var navFolder = e.target.closest('[data-nav-folder]');
+    if (navFolder) {
+      navigateFolder(navFolder.getAttribute('data-nav-folder'));
+      return;
+    }
+    var navBack = e.target.closest('[data-nav-back]');
+    if (navBack) {
+      navigateBack();
+      return;
+    }
+    var navBreadcrumb = e.target.closest('[data-nav-path]');
+    if (navBreadcrumb) {
+      navigateFolder(navBreadcrumb.getAttribute('data-nav-path'));
+      return;
+    }
+
+    // Preview clickable file name (with optional subpath)
+    var previewName = e.target.getAttribute('data-preview');
+    if (previewName) {
+      var previewSub = e.target.getAttribute('data-preview-subpath') || '';
+      previewFile(previewName, previewSub);
+      return;
+    }
+
+    // Episode buttons
+    var epBtn = e.target.closest('[data-action^="ep-"], [data-action="delivery-refresh"], [data-action="deliver-start"]');
+    if (epBtn) {
+      var epAction = epBtn.getAttribute('data-action');
+      var epProject = epBtn.getAttribute('data-project');
+      if (epAction === 'ep-save') saveEpisodes(epProject, epBtn);
+      else if (epAction === 'ep-auto') autoCountEpisodes(epProject, epBtn);
+      else if (epAction === 'delivery-refresh') refreshCardDeliveryStats(epProject, epBtn);
+      else if (epAction === 'deliver-start') startDeliver(epProject, epBtn);
+      return;
+    }
+
+    var btn = e.target.closest('button');
+    if (!btn) {
+      var sel = e.target.closest('.custom-status-select');
+      if (sel) return;
+      return;
+    }
+    var action = btn.getAttribute('data-action');
+    var project = btn.getAttribute('data-project');
+    var subpath = btn.getAttribute('data-subpath') || '';
+    var dataPath = btn.getAttribute('data-path') || '';
+    if (action === 'sync' && project) syncProject(project);
+    else if (action === 'files' && project) showFiles(project);
+    else if (action === 'deliver' && project) deliverFile(project);
+    else if (action === 'preview' && project) previewFile(project, subpath);
+    else if (action === 'open-folder' && project) openProjectFolder(project, dataPath);
+  });
+
+  document.getElementById('modal').addEventListener('click', function(e) {
+    if (e.target === this || e.target.id === 'modal-close') closeModal();
+  });
+
+  document.getElementById('preview-overlay').addEventListener('click', function(e) {
+    if (e.target === this || e.target.id === 'preview-close') closePreview();
+  });
+
+  document.getElementById('btn-scan').addEventListener('click', scanProjects);
+  document.getElementById('btn-batch-deliver').addEventListener('click', batchDeliver);
+
+  document.getElementById('btn-restart').addEventListener('click', function() {
+    if (!confirm('确认重启 NAS Bridge 服务？\n\n页面会在重启后自动刷新。')) return;
+    showToast('正在重启...');
+    api('POST', '/api/service/restart').then(function(data) {
+      if (data.ok) {
+        showToast(data.message || '重启中...');
+        setTimeout(function() { location.reload(); }, 1500);
+      } else {
+        showToast(data.message || '重启失败');
+      }
+    }).catch(function() { showToast('请求失败'); });
+  });
+
+  document.getElementById('btn-stop').addEventListener('click', function() {
+    if (!confirm('确认停止 NAS Bridge 服务？\n\n停止后页面将不可访问，需要重新启动。')) return;
+    showToast('正在停止...');
+    api('POST', '/api/service/stop').then(function(data) {
+      if (data.ok) showToast(data.message || '停止中...');
+      else showToast(data.message || '停止失败');
+    }).catch(function() { showToast('请求失败'); });
+  });
+
+  // Custom status change handler (event delegation)
+  document.addEventListener('change', function(e) {
+    var sel = e.target.closest('.custom-status-select');
+    if (!sel) return;
+    var projectName = sel.getAttribute('data-status-project');
+    var newStatus = sel.value;
+    handleStatusChange(projectName, newStatus, sel);
+  });
+
+  function handleStatusChange(projectName, newStatus, sel) {
+    if (newStatus === '待交付') {
+      if (!confirm('将项目"' + projectName + '"设为"待交付"？\n\n系统会自动将交付文件夹（000交付）复制到该项目的根目录中。')) {
+        sel.value = '';
+        return;
+      }
+      showToast('正在设置状态并复制交付文件夹...');
+    } else if (newStatus === '修改中') {
+      var now = new Date();
+      var mm = String(now.getMonth() + 1).padStart(2, '0');
+      var dd = String(now.getDate()).padStart(2, '0');
+      var folderName = mm + dd + '修改';
+      if (!confirm('将项目"' + projectName + '"设为"修改中"？\n\n系统会在01上映单集版目录中新建文件夹: ' + folderName)) {
+        sel.value = '';
+        return;
+      }
+      showToast('正在设置状态并创建修改文件夹...');
+    } else {
+      showToast('正在更新状态...');
+    }
+
+    api('POST', '/api/project/' + encodeURIComponent(projectName) + '/custom_status', { status: newStatus }).then(function(data) {
+      showToast(data.message || (data.ok ? '状态已更新' : '更新失败'));
+      if (data.ok) {
+        // Update select styling
+        sel.className = 'custom-status-select status-' + newStatus;
+        loadProjects();
+      }
+    }).catch(function() { showToast('操作失败'); });
+  }
+
+  // ========== Episode management ==========
+
+  function saveEpisodes(projectName, btn) {
+    var card = btn.closest('.episode-row');
+    if (!card) return;
+    var totalInput = card.querySelector('[data-field="total"]');
+    var currentInput = card.querySelector('[data-field="current"]');
+    var total = parseInt(totalInput.value) || 0;
+    var current = parseInt(currentInput.value) || 0;
+
+    showToast('正在保存集数...');
+    api('POST', '/api/project/' + encodeURIComponent(projectName) + '/episodes', { total: total, current: current }).then(function(data) {
+      if (data.ok) {
+        showToast(data.message || '集数已保存');
+        if (data.completed) {
+          showToast('🎉 集数已完成！' + current + '/' + total + ' 集全部输出');
+          // Also try browser notification
+          if ('Notification' in window && Notification.permission === 'granted') {
+            new Notification('集数完成提醒', { body: projectName + ' 已完成全部 ' + total + ' 集输出！' });
+          }
+        }
+        loadProjects();
+      } else {
+        showToast(data.message || '保存失败');
+      }
+    }).catch(function() { showToast('操作失败'); });
+  }
+
+  function autoCountEpisodes(projectName, btn) {
+    showToast('正在统计成片文件...');
+    api('GET', '/api/project/' + encodeURIComponent(projectName) + '/auto_count').then(function(data) {
+      if (data.ok) {
+        var count = data.count;
+        var card = btn.closest('.episode-row');
+        if (card) {
+          var currentInput = card.querySelector('[data-field="current"]');
+          currentInput.value = count;
+        }
+        showToast('统计到 ' + count + ' 个成片文件，已填入当前集数');
+      } else {
+        showToast('统计失败');
+      }
+    }).catch(function() { showToast('操作失败'); });
+  }
+
+  function refreshCardDeliveryStats(projectName, btn) {
+    btn.disabled = true;
+    var origText = btn.textContent;
+    btn.textContent = '统计中...';
+    api('GET', '/api/project/' + encodeURIComponent(projectName) + '/delivery_stats').then(function(data) {
+      btn.disabled = false;
+      btn.textContent = origText;
+      if (data.ok) {
+        var stats = data.stats;
+        // 更新 allData 中对应项目的 delivery_stats
+        var proj = findProject(projectName);
+        if (proj) proj.delivery_stats = stats;
+        // 重渲染卡片
+        renderAll();
+        showToast('交付统计已刷新（综合 ' + stats.overall_pct + '%）');
+      } else {
+        showToast('统计失败');
+      }
+    }).catch(function() {
+      btn.disabled = false;
+      btn.textContent = origText;
+      showToast('操作失败');
+    });
+  }
+
+  var _deliverPollingTimers = {};
+
+  function startDeliver(projectName, btn) {
+    if (!confirm('确认一键交付？\n\n将把组内NAS项目下的「000交付」整个复制到制作部NAS对应项目。')) return;
+
+    btn.disabled = true;
+    btn.textContent = '准备中...';
+
+    var row = btn.closest('.card-delivery-row');
+    if (row) {
+      // 显示交付进度条区域，隐藏其他按钮
+      var progressArea = row.querySelector('.card-delivery-progress');
+      if (progressArea) progressArea.style.display = 'block';
+      row.querySelectorAll('.delivery-refresh-btn, .deliver-btn').forEach(function(b) { b.style.display = 'none'; });
+    }
+
+    api('POST', '/api/project/' + encodeURIComponent(projectName) + '/deliver').then(function(data) {
+      if (data.ok) {
+        showToast('交付已启动：' + data.message);
+        startDeliverPolling(projectName, row);
+      } else {
+        showToast('启动失败：' + data.message);
+        if (row) {
+          var progressArea = row.querySelector('.card-delivery-progress');
+          if (progressArea) progressArea.style.display = 'none';
+          row.querySelectorAll('.delivery-refresh-btn, .deliver-btn').forEach(function(b) { b.style.display = ''; });
+        }
+        btn.disabled = false;
+        btn.textContent = '🚀 一键交付';
+      }
+    }).catch(function() {
+      showToast('启动失败');
+      btn.disabled = false;
+      btn.textContent = '🚀 一键交付';
+    });
+  }
+
+  function startDeliverPolling(projectName, row) {
+    if (_deliverPollingTimers[projectName]) return;
+
+    var pctEl = row ? row.querySelector('.card-dp-fill') : null;
+    var textEl = row ? row.querySelector('.card-dp-text') : null;
+
+    _deliverPollingTimers[projectName] = setInterval(function() {
+      api('GET', '/api/project/' + encodeURIComponent(projectName) + '/deliver_status').then(function(data) {
+        if (!data.ok) return;
+        var st = data.status;
+        if (!row) return;
+
+        if (st.status === 'starting') {
+          if (textEl) textEl.textContent = '正在准备...';
+          return;
+        }
+        if (st.status === 'running') {
+          var pct = st.pct || 0;
+          var cur = st.current || 0;
+          var total = st.total || 0;
+          if (pctEl) pctEl.style.width = pct + '%';
+          if (textEl) textEl.textContent = '正在复制... ' + cur + '/' + total + ' (' + pct + '%)';
+          return;
+        }
+        if (st.status === 'done') {
+          clearInterval(_deliverPollingTimers[projectName]);
+          delete _deliverPollingTimers[projectName];
+          if (pctEl) { pctEl.style.width = '100%'; pctEl.style.background = '#34c759'; }
+          var dstPath = st.dst || '';
+          if (textEl) textEl.textContent = '✅ 交付完成（' + st.finished_at + '）';
+          showToast('🎉 一键交付完成！');
+          if (dstPath) {
+            copyToClipboard(dstPath);
+            showToast('📋 交付路径已复制: ' + dstPath);
+          }
+          setTimeout(function() { loadProjects(); }, 1500);
+          return;
+        }
+        if (st.status === 'error') {
+          clearInterval(_deliverPollingTimers[projectName]);
+          delete _deliverPollingTimers[projectName];
+          if (pctEl) pctEl.style.background = '#ff3b30';
+          if (textEl) textEl.textContent = '❌ ' + (st.message || '交付失败');
+          showToast('交付失败：' + (st.message || '未知错误'));
+          return;
+        }
+      }).catch(function() {});
+    }, 1500);
+  }
+
+  // Request notification permission on load
+  if ('Notification' in window && Notification.permission === 'default') {
+    Notification.requestPermission();
+  }
+
+  // Sort & filter
+  document.getElementById('sort-select').addEventListener('change', function() {
+    sortMode = this.value;
+    renderAll();
+  });
+  document.getElementById('filter-delivery').addEventListener('change', function() {
+    filterDelivery = this.value;
+    renderAll();
+  });
+  document.getElementById('filter-group').addEventListener('change', function() {
+    filterGroup = this.value;
+    renderAll();
+  });
+  document.getElementById('filter-custom-status').addEventListener('change', function() {
+    filterCustomStatus = this.value;
+    renderAll();
+  });
+  document.getElementById('filter-department').addEventListener('change', function() {
+    filterDepartment = this.value;
+    renderAll();
+  });
+
+  // Search
+  document.getElementById('search').addEventListener('input', function() {
+    renderAll();
+  });
+
+  // ========== NAS Path Management ==========
+
+  function showPathsModal() {
+    document.getElementById('paths-modal').classList.add('active');
+    loadPaths();
+  }
+
+  function closePathsModal() {
+    document.getElementById('paths-modal').classList.remove('active');
+  }
+
+  function loadPaths() {
+    api('GET', '/api/config/paths').then(function(data) {
+      if (!data.ok) { showToast('加载路径失败'); return; }
+
+      // Production roots
+      var prodList = document.getElementById('prod-paths-list');
+      var roots = data.production_roots || [];
+      var labels = data.production_labels || {};
+      if (!roots.length) {
+        prodList.innerHTML = '<div style="font-size:12px;color:#86868b;padding:8px 0">暂无制作部路径</div>';
+      } else {
+        var html = '';
+        for (var i = 0; i < roots.length; i++) {
+          var r = roots[i];
+          var lbl = labels[r] || '';
+          html += '<div class="path-item">'
+            + '<span class="path-item-path">' + htm(r) + '</span>'
+            + (lbl ? '<span class="path-item-label">' + htm(lbl) + '</span>' : '')
+            + '<button class="btn-danger-sm" data-del-type="production" data-del-path="' + htm(r) + '">删除</button>'
+            + '</div>';
+        }
+        prodList.innerHTML = html;
+      }
+
+      // Group root
+      var gr = data.group_root || '';
+      document.getElementById('group-root-row').innerHTML =
+        '<span class="label">当前：</span>' + (gr ? htm(gr) : '<span style="color:#ff3b30">未配置</span>');
+
+      // UNC map
+      var uncList = document.getElementById('unc-paths-list');
+      var uncMap = data.unc_map || {};
+      var uncKeys = Object.keys(uncMap);
+      if (!uncKeys.length) {
+        uncList.innerHTML = '<div style="font-size:12px;color:#86868b;padding:8px 0">暂无 UNC 映射</div>';
+      } else {
+        var uhtml = '';
+        for (var j = 0; j < uncKeys.length; j++) {
+          var dk = uncKeys[j];
+          uhtml += '<div class="path-item">'
+            + '<span class="path-item-path">' + htm(dk) + ' &rarr; ' + htm(uncMap[dk]) + '</span>'
+            + '<button class="btn-danger-sm" data-del-type="unc" data-del-drive="' + htm(dk) + '">删除</button>'
+            + '</div>';
+        }
+        uncList.innerHTML = uhtml;
+      }
+    }).catch(function() { showToast('加载路径失败'); });
+  }
+
+  function addProdPath() {
+    var path = document.getElementById('prod-path-input').value.trim();
+    var label = document.getElementById('prod-label-input').value.trim();
+    if (!path) { showToast('请输入路径'); return; }
+    api('POST', '/api/config/paths', { type: 'production', path: path, label: label }).then(function(data) {
+      if (data.ok) {
+        showToast(data.message);
+        document.getElementById('prod-path-input').value = '';
+        document.getElementById('prod-label-input').value = '';
+        loadPaths();
+      } else { showToast(data.message); }
+    }).catch(function() { showToast('操作失败'); });
+  }
+
+  function setGroupPath() {
+    var path = document.getElementById('group-path-input').value.trim();
+    if (!path) { showToast('请输入路径'); return; }
+    api('POST', '/api/config/paths', { type: 'group', path: path }).then(function(data) {
+      if (data.ok) {
+        showToast(data.message);
+        document.getElementById('group-path-input').value = '';
+        loadPaths();
+      } else { showToast(data.message); }
+    }).catch(function() { showToast('操作失败'); });
+  }
+
+  function addUncPath() {
+    var drive = document.getElementById('unc-drive-input').value.trim();
+    var unc = document.getElementById('unc-path-input').value.trim();
+    if (!drive || !unc) { showToast('请填写盘符和 UNC 路径'); return; }
+    api('POST', '/api/config/paths', { type: 'unc', drive: drive, unc: unc }).then(function(data) {
+      if (data.ok) {
+        showToast(data.message);
+        document.getElementById('unc-drive-input').value = '';
+        document.getElementById('unc-path-input').value = '';
+        loadPaths();
+      } else { showToast(data.message); }
+    }).catch(function() { showToast('操作失败'); });
+  }
+
+  function removePath(type, key) {
+    if (type === 'production') {
+      api('DELETE', '/api/config/paths', { type: 'production', path: key }).then(function(data) {
+        showToast(data.ok ? data.message : data.message);
+        if (data.ok) loadPaths();
+      }).catch(function() { showToast('操作失败'); });
+    } else if (type === 'unc') {
+      api('DELETE', '/api/config/paths', { type: 'unc', drive: key }).then(function(data) {
+        showToast(data.ok ? data.message : data.message);
+        if (data.ok) loadPaths();
+      }).catch(function() { showToast('操作失败'); });
+    }
+  }
+
+  // Event delegation for path modal delete buttons
+  document.getElementById('paths-modal').addEventListener('click', function(e) {
+    if (e.target === this || e.target.id === 'paths-modal-close') { closePathsModal(); return; }
+    var delBtn = e.target.closest('[data-del-type]');
+    if (delBtn) {
+      var dtype = delBtn.getAttribute('data-del-type');
+      if (dtype === 'production') {
+        removePath('production', delBtn.getAttribute('data-del-path'));
+      } else if (dtype === 'unc') {
+        removePath('unc', delBtn.getAttribute('data-del-drive'));
+      }
+    }
+  });
+
+  document.getElementById('btn-paths').addEventListener('click', showPathsModal);
+  document.getElementById('btn-paths-done').addEventListener('click', function() {
+    closePathsModal();
+    showToast('正在刷新项目...');
+    loadProjects();
+  });
+  document.getElementById('btn-add-prod').addEventListener('click', addProdPath);
+  document.getElementById('btn-set-group').addEventListener('click', setGroupPath);
+  document.getElementById('btn-add-unc').addEventListener('click', addUncPath);
+
+  // ========== Logs & status ==========
+
+  function loadLogs() {
+    api('GET', '/api/logs?limit=50').then(function(logs) {
+      var container = document.getElementById('logs');
+      if (!logs.length) {
+        container.innerHTML = '<div class="loading">暂无日志</div>';
+        return;
+      }
+      var html = '';
+      for (var i = 0; i < logs.length; i++) {
+        var l = logs[i];
+        var typeText = l.type === 'sync' ? '同步' : '交付';
+        html += '<div class="log-item">'
+          + '<span class="log-time">' + htm(l.created_at) + '</span>'
+          + '<span class="log-type log-type-' + l.type + '">' + typeText + '</span>'
+          + '<span class="log-project" title="' + htm(l.project_name) + '">' + htm(l.project_name) + '</span>'
+          + '<span class="log-message ' + htm(l.status) + '">' + htm(l.title) + ' - ' + htm(l.message) + '</span>'
+          + '</div>';
+      }
+      container.innerHTML = html;
+    }).catch(function() {});
+  }
+
+  function loadStatus() {
+    api('GET', '/api/status').then(function(status) {
+      var dot = document.getElementById('watcher-dot');
+      var text = document.getElementById('watcher-status');
+      if (status.watcher_enabled) {
+        text.textContent = '监听中 (' + status.watched_dirs + '个目录)';
+        dot.classList.remove('offline');
+      } else {
+        text.textContent = '监听已禁用';
+        dot.classList.add('offline');
+      }
+    }).catch(function() {});
+  }
+
+  // 加载超时检测
+  var loadTimeout = setTimeout(function() {
+    var el = document.getElementById('project-sections');
+    if (el && el.innerHTML.indexOf('加载中') !== -1) {
+      el.innerHTML = '<div class="empty"><div class="empty-icon">⚠️</div>' +
+        '<div>加载超时，正在重试...</div>' +
+        '<div style="font-size:12px;margin-top:8px;color:#86868b">如持续加载不出来，请按 Ctrl+F5 强制刷新</div></div>';
+      loadProjects();
+    }
+  }, 10000);
+
+  loadProjects();
+  loadLogs();
+  loadStatus();
+  setInterval(function() { loadProjects(); loadLogs(); loadStatus(); }, 8000);
+</script>
+</body>
+</html>

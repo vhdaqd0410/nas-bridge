@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# 运行时数据
+nas_bridge.db
+nas_bridge.db-wal
+nas_bridge.db-shm
+*.log
+startup.log
+stdout.log
+stderr.log
+app_output.log
+vbs_debug.log
+
+# 测试/临时
+__test_*
+test_api*.py
+*.tmp
+
+# 系统
+Thumbs.db
+.DS_Store
