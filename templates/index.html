@@ -455,7 +455,7 @@
   var currentProject = '';
   var allData = { production: [], group_all: [], group_completed: [] };
   var collapsedDepts = {};
-  var sortMode = 'name';
+  var sortMode = 'custom_status';
   var filterDelivery = '';
   var filterGroup = '';
   var filterCustomStatus = '';
@@ -618,10 +618,6 @@
         + '<div class="ep-bar"><div class="ep-fill' + (epComplete ? ' complete' : '') + '" style="width:' + epPct + '%"></div></div>'
         + '<span class="ep-text' + (epComplete ? ' complete' : '') + '">' + currentEp + '/' + totalEp + ' (' + epPct + '%)' + (epComplete ? ' ✅' : '') + '</span>'
         + '<div class="ep-missing-summary" data-ep-summary="' + htm(p.name) + '">加载中...</div>'
-        + '<div class="card-delivery-progress" style="display:block">'
-        + '<div class="card-dp-bar"><div class="card-dp-fill" style="width:0%"></div></div>'
-        + '<span class="card-dp-text">等待交付...</span>'
-        + '</div>'
         + '</div>';
     } else if (cs === '待交付') {
       episodeHtml = buildCardDeliveryBar(p);
@@ -1847,6 +1843,10 @@
   }
 
   function fetchEpisodeStatus(projectName) {
+    // 缓存短路：先把旧缓存渲染出来，再异步拉取最新
+    if (_episodeStatusCache[projectName]) {
+      updateCardEpisodeSummary(projectName, _episodeStatusCache[projectName]);
+    }
     if (_episodeStatusPending[projectName]) return _episodeStatusPending[projectName];
     _episodeStatusPending[projectName] = api('GET', '/api/project/' + encodeURIComponent(projectName) + '/episodes_status')
       .then(function(data) {
@@ -1887,26 +1887,56 @@
       return;
     }
 
-    // 有缺失：把每集负责人拼出来
-    var namedMissing = [];
+    // 按剪辑人员分组
+    var groups = {};  // creator -> [ep numbers]
+    var unassigned = [];
     for (var i = 0; i < missing.length; i++) {
       var ep = missing[i];
       var creator = plan[String(ep)] || plan[ep] || null;
-      namedMissing.push({ ep: ep, creator: creator });
+      if (creator) {
+        if (!groups[creator]) groups[creator] = [];
+        groups[creator].push(ep);
+      } else {
+        unassigned.push(ep);
+      }
     }
-    var missingNumsHtml = namedMissing.map(function(x) {
-      var suffix = x.creator ? ' <small style="color:#6b6b70">(' + htm(x.creator) + ')</small>' : '';
-      return '<span style="margin-right:6px">' + String(x.ep).padStart(2, '0') + suffix + '</span>';
-    }).join('');
-    var unassigned = namedMissing.filter(function(x) { return !x.creator; }).length;
+
+    // 把连续数字合并成范围字符串，[5,6,7,12,13] -> "05-07, 12-13"
+    function compactRange(nums) {
+      if (!nums.length) return '';
+      nums = nums.slice().sort(function(a, b) { return a - b; });
+      var parts = [];
+      var start = nums[0], prev = nums[0];
+      for (var k = 1; k < nums.length; k++) {
+        if (nums[k] === prev + 1) {
+          prev = nums[k];
+        } else {
+          parts.push(start === prev ? String(start).padStart(2, '0') : String(start).padStart(2, '0') + '-' + String(prev).padStart(2, '0'));
+          start = prev = nums[k];
+        }
+      }
+      parts.push(start === prev ? String(start).padStart(2, '0') : String(start).padStart(2, '0') + '-' + String(prev).padStart(2, '0'));
+      return parts.join(', ');
+    }
+
+    var lines = [];
+    for (var name in groups) {
+      if (!groups.hasOwnProperty(name)) continue;
+      lines.push('<span style="margin-right:10px"><b>' + htm(name) + '</b>: ' + compactRange(groups[name]) + '</span>');
+    }
+    if (unassigned.length > 0) {
+      lines.push('<span style="margin-right:10px;color:#6b6b70"><b>未分配</b>: ' + compactRange(unassigned) + '</span>');
+    }
+
     var tip = '缺 ' + missing.length + '/' + total + ' 集';
-    if (unassigned > 0) tip += '（' + unassigned + ' 集未分配剪辑）';
+    if (unassigned.length > 0) tip += '（' + unassigned.length + ' 集未分配）';
     var extra = '';
     if (unnamed && unnamed.length > 0) {
       extra = '<span class="ep-missing-creator">另有 ' + unnamed.length + ' 个文件未识别集号</span>';
     }
     box.className = 'ep-missing-summary has-missing';
-    box.innerHTML = '<b>' + tip + '</b><div class="ep-missing-nums">' + missingNumsHtml + '</div>'
+    box.innerHTML = '<b>' + tip + '</b>'
+      + '<div class="ep-missing-nums">' + lines.join('') + '</div>'
       + extra
       + '<button class="ep-detail-btn" data-action="ep-detail" data-project="' + htm(projectName) + '">详情/分配人员</button>';
   }
