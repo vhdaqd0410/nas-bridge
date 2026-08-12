@@ -368,6 +368,7 @@
         <h2 id="modal-title">成片文件</h2>
         <span class="modal-close" id="modal-close">&times;</span>
       </div>
+      <div id="modal-body" style="display:none"></div>
       <div id="modal-extra" style="display:none"></div>
       <div class="modal-toolbar" id="modal-toolbar" style="display:none">
         <label class="checkbox-all"><input type="checkbox" id="select-all" onchange="toggleSelectAll()"> 全选</label>
@@ -1574,6 +1575,11 @@
   function closeModal() {
     document.getElementById('modal').classList.remove('active');
     stopBatchPolling();
+    // Restore default modal layout (file-list visible, body hidden)
+    var fl = document.getElementById('file-list');
+    var body = document.getElementById('modal-body');
+    if (fl) fl.style.display = '';
+    if (body) body.style.display = 'none';
   }
 
   // ========== Video preview ==========
@@ -1902,19 +1908,40 @@
   }
 
   function openEpisodeDetail(projectName) {
-    var title = document.getElementById('modal-title');
-    var body = document.getElementById('modal-body');
-    title.textContent = '集数详情 - ' + projectName;
-    body.innerHTML = '<div class="empty"><div class="loading">加载集数状态...</div></div>';
-    document.getElementById('modal').classList.add('active');
+    console.log('[ep-detail] click, project =', projectName);
+    try {
+      var title = document.getElementById('modal-title');
+      var body = document.getElementById('modal-body');
+      var fileList = document.getElementById('file-list');
+      // Swap: show body, hide file-list and toolbar/batch-progress
+      title.textContent = '集数详情 - ' + projectName;
+      body.style.display = '';
+      body.innerHTML = '<div class="empty"><div class="loading">加载集数状态...</div></div>';
+      if (fileList) fileList.style.display = 'none';
+      var tb = document.getElementById('modal-toolbar');
+      var bp = document.getElementById('batch-progress');
+      var extra = document.getElementById('modal-extra');
+      if (tb) tb.style.display = 'none';
+      if (bp) bp.style.display = 'none';
+      if (extra) extra.style.display = 'none';
+      document.getElementById('modal').classList.add('active');
+      console.log('[ep-detail] modal opened, body exists:', !!body);
 
-    fetchEpisodeStatus(projectName).then(function(data) {
-      if (!data || !data.ok) {
-        body.innerHTML = '<div class="empty"><div class="empty-icon">⚠️</div><div>获取失败</div></div>';
-        return;
-      }
-      renderEpisodeDetailBody(projectName, data);
-    });
+      fetchEpisodeStatus(projectName).then(function(data) {
+        console.log('[ep-detail] status received', data);
+        if (!data || !data.ok) {
+          body.innerHTML = '<div class="empty"><div class="empty-icon">⚠️</div><div>获取失败</div></div>';
+          return;
+        }
+        renderEpisodeDetailBody(projectName, data);
+      }).catch(function(err) {
+        console.error('[ep-detail] fetch failed', err);
+        body.innerHTML = '<div class="empty"><div class="empty-icon">⚠️</div><div>请求失败: ' + htm(String(err)) + '</div></div>';
+      });
+    } catch (err) {
+      console.error('[ep-detail] top-level error', err);
+      alert('打开详情出错: ' + err.message);
+    }
   }
 
   function renderEpisodeDetailBody(projectName, data) {

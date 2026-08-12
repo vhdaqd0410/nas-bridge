@@ -23,3 +23,13 @@ test_api*.py
 # 系统
 Thumbs.db
 .DS_Store
+
+# Node / Playwright / 临时脚本
+node_modules/
+package.json
+package-lock.json
+_probe*.py
+_check*.py
+_grep*.py
+_js*.js
+_pw*.js
