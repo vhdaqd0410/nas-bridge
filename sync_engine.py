@@ -754,6 +754,7 @@ class SyncEngine:
                 g["production_path"] = p.get("production_path", "") or ""
                 g["total_episodes"] = p.get("total_episodes", 0) or 0
                 g["current_episodes"] = p.get("current_episodes", 0) or 0
+                g["episode_plan"] = p.get("episode_plan") or "{}"
                 if not g.get("created_at"):
                     g["created_at"] = p.get("created_at", "") or ""
 

@@ -179,12 +179,35 @@
   .ep-text { font-size: 11px; color: #86868b; }
   .ep-text.complete { color: #137333; font-weight: 600; }
   .ep-notify { font-size: 11px; color: #137333; font-weight: 600; margin-top: 3px; display: flex; align-items: center; gap: 4px; }
-  .ep-missing-summary { margin-top: 4px; padding: 6px 10px; border-radius: 6px; font-size: 11.5px; line-height: 1.5; }
+  .ep-missing-summary { margin-top: 4px; padding: 8px 10px; border-radius: 6px; font-size: 11.5px; line-height: 1.5; }
   .ep-missing-summary.has-missing { background: #fff5f5; border: 1px solid #fecaca; color: #c5221f; }
   .ep-missing-summary.ok { background: #e6f4ea; border: 1px solid #a8d5ba; color: #137333; }
-  .ep-missing-summary .ep-missing-nums { font-weight: 600; margin: 2px 0; word-break: break-all; }
-  .ep-missing-summary .ep-missing-creator { display: block; font-size: 11px; color: #6b6b70; margin-top: 2px; }
-  .ep-missing-summary .ep-detail-btn { font-size: 11px; padding: 2px 8px; border-radius: 4px; border: 1px solid currentColor; background: transparent; cursor: pointer; margin-left: 6px; color: inherit; font-family: inherit; }
+  .ep-person-grid { display: flex; flex-direction: column; gap: 3px; margin: 6px 0 4px; }
+  .ep-person-row { display: flex; align-items: center; gap: 8px; font-size: 11.5px; }
+  .ep-person-name {
+    flex-shrink: 0;
+    padding: 1px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 600;
+    background: #fecaca;
+    color: #991b1b;
+    min-width: 52px;
+    text-align: center;
+    letter-spacing: 0.3px;
+  }
+  .ep-person-unassigned .ep-person-name { background: #e5e7eb; color: #6b6b70; font-weight: 500; }
+  .ep-person-range {
+    font-family: ui-monospace, "Cascadia Code", "Consolas", monospace;
+    font-size: 11.5px;
+    color: #7f1d1d;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+  }
+  .ep-person-unassigned .ep-person-range { color: #6b6b70; font-weight: 500; }
+  .ep-unnamed-tip { font-size: 11px; color: #86868b; margin-top: 3px; }
+  .ep-unassigned-count { color: #a16207; }
+  .ep-missing-summary .ep-detail-btn { font-size: 11px; padding: 2px 8px; border-radius: 4px; border: 1px solid currentColor; background: transparent; cursor: pointer; margin-top: 4px; color: inherit; font-family: inherit; }
   .ep-missing-summary .ep-detail-btn:hover { opacity: 0.8; }
 
   /* ---- episode detail modal ---- */
@@ -604,6 +627,8 @@
       var currentEp = p.current_episodes || 0;
       var epPct = totalEp > 0 ? Math.round(currentEp / totalEp * 100) : 0;
       var epComplete = totalEp > 0 && currentEp >= totalEp;
+      // 渲染时直接读缓存：有数据就生成正式 summary，没数据才根据 DB 数字生成占位
+      var summaryResult = buildEpSummaryHtml(_episodeStatusCache[p.name] || null, p.name, p);
       episodeHtml = '<div class="episode-row" data-ep-project="' + htm(p.name) + '">'
         + '<div class="episode-inputs">'
         + '<span class="episode-label">集数</span>'
@@ -617,7 +642,7 @@
         + '</div>'
         + '<div class="ep-bar"><div class="ep-fill' + (epComplete ? ' complete' : '') + '" style="width:' + epPct + '%"></div></div>'
         + '<span class="ep-text' + (epComplete ? ' complete' : '') + '">' + currentEp + '/' + totalEp + ' (' + epPct + '%)' + (epComplete ? ' ✅' : '') + '</span>'
-        + '<div class="ep-missing-summary" data-ep-summary="' + htm(p.name) + '">加载中...</div>'
+        + '<div class="' + summaryResult.className + '" data-ep-summary="' + htm(p.name) + '">' + summaryResult.html + '</div>'
         + '</div>';
     } else if (cs === '待交付') {
       episodeHtml = buildCardDeliveryBar(p);
@@ -1828,25 +1853,132 @@
   var _episodeStatusCache = {};
   var _episodeStatusPending = {};
 
-  function loadAllEpisodeSummary() {
-    if (!allData || !allData.projects) return;
-    var names = [];
-    for (var i = 0; i < allData.projects.length; i++) {
-      var p = allData.projects[i];
-      if ((p.custom_status || '') === '剪辑中' && p.project_type !== 'production') {
-        names.push(p.name);
+  // 把连续数字合并成范围字符串，[5,6,7,12,13] -> "05-07, 12-13"
+  function _compactRange(nums) {
+    if (!nums.length) return '';
+    nums = nums.slice().sort(function(a, b) { return a - b; });
+    var parts = [];
+    var start = nums[0], prev = nums[0];
+    for (var k = 1; k < nums.length; k++) {
+      if (nums[k] === prev + 1) {
+        prev = nums[k];
+      } else {
+        parts.push(start === prev ? String(start).padStart(2, '0') : String(start).padStart(2, '0') + '-' + String(prev).padStart(2, '0'));
+        start = prev = nums[k];
       }
     }
-    for (var j = 0; j < names.length; j++) {
-      fetchEpisodeStatus(names[j]);
+    parts.push(start === prev ? String(start).padStart(2, '0') : String(start).padStart(2, '0') + '-' + String(prev).padStart(2, '0'));
+    return parts.join(', ');
+  }
+
+  // 纯函数：根据 episodes_status 数据 + 项目名，生成 ep-summary 的 class + innerHTML
+  // data 可以是 null（没拿到数据）或 { ok, total, missing, unnamed, editor_plan, current_count }
+  // dbFallback: 从 /api/projects 拿到的原始项目数据，用于"还没 set 总集数"场景显示 DB 里的值
+  function buildEpSummaryHtml(data, projectName, dbFallback) {
+    if (!data || !data.ok) {
+      if (dbFallback) {
+        var total = dbFallback.total_episodes || 0;
+        if (total > 0) {
+          var cur = dbFallback.current_episodes || 0;
+          var plan = {};
+          if (dbFallback.episode_plan) {
+            try { plan = typeof dbFallback.episode_plan === 'string' ? JSON.parse(dbFallback.episode_plan) : dbFallback.episode_plan; } catch(e) {}
+          }
+          var personRows = [];
+          if (plan && Object.keys(plan).length > 0) {
+            var grouped = {};
+            for (var k in plan) {
+              if (!plan.hasOwnProperty(k)) continue;
+              var creator = plan[k];
+              if (!creator) continue;
+              if (!grouped[creator]) grouped[creator] = [];
+              grouped[creator].push(parseInt(k, 10) || k);
+            }
+            for (var name in grouped) {
+              if (!grouped.hasOwnProperty(name)) continue;
+              personRows.push('<div class="ep-person-row"><span class="ep-person-name">' + htm(name) + '</span><span class="ep-person-range">负责 ' + _compactRange(grouped[name]) + '</span></div>');
+            }
+          }
+          var html = '<b>' + cur + '/' + total + ' 集</b> · 正在扫描文件确认输出情况...';
+          if (personRows.length > 0) html += '<div class="ep-person-grid">' + personRows.join('') + '</div>';
+          html += '<button class="ep-detail-btn" data-action="ep-detail" data-project="' + htm(projectName) + '">详情/分配人员</button>';
+          return { className: 'ep-missing-summary', html: html };
+        }
+      }
+      return { className: 'ep-missing-summary', html: '' };
+    }
+    var total = data.total || 0;
+    var missing = data.missing || [];
+    var unnamed = data.unnamed || [];
+    var plan = data.editor_plan || {};
+    var curCount = data.current_count || 0;
+
+    if (total === 0) {
+      return { className: 'ep-missing-summary', html: '请先设置「总集数」，再点「统计」识别文件' };
+    }
+    if (missing.length === 0) {
+      var detailHint = ' <button class="ep-detail-btn" data-action="ep-detail" data-project="' + htm(projectName) + '">详情</button>';
+      return {
+        className: 'ep-missing-summary ok',
+        html: '✅ ' + curCount + '/' + total + ' 集 全部输出完成' + detailHint
+      };
+    }
+
+    // 按剪辑人员分组
+    var groups = {};
+    var unassigned = [];
+    for (var i = 0; i < missing.length; i++) {
+      var ep = missing[i];
+      var creator = plan[String(ep)] || plan[ep] || null;
+      if (creator) {
+        if (!groups[creator]) groups[creator] = [];
+        groups[creator].push(ep);
+      } else {
+        unassigned.push(ep);
+      }
+    }
+
+    // 每人一行：<div class="ep-person-row"><b>人名</b><span class="ep-person-range">01-04, 12</span></div>
+    var personRows = [];
+    for (var name in groups) {
+      if (!groups.hasOwnProperty(name)) continue;
+      personRows.push('<div class="ep-person-row"><span class="ep-person-name">' + htm(name) + '</span><span class="ep-person-range">' + _compactRange(groups[name]) + '</span></div>');
+    }
+    if (unassigned.length > 0) {
+      personRows.push('<div class="ep-person-row ep-person-unassigned"><span class="ep-person-name">未分配</span><span class="ep-person-range">' + _compactRange(unassigned) + '</span></div>');
+    }
+
+    var tipHtml = '<b>缺 ' + missing.length + '/' + total + ' 集</b>';
+    if (unassigned.length > 0) tipHtml += '（<span class="ep-unassigned-count">' + unassigned.length + ' 集未分配</span>）';
+    var unnamedHtml = '';
+    if (unnamed && unnamed.length > 0) {
+      unnamedHtml = '<div class="ep-unnamed-tip">另有 ' + unnamed.length + ' 个文件未识别集号</div>';
+    }
+    var detailBtn = '<button class="ep-detail-btn" data-action="ep-detail" data-project="' + htm(projectName) + '">详情/分配人员</button>';
+
+    return {
+      className: 'ep-missing-summary has-missing',
+      html: tipHtml + '<div class="ep-person-grid">' + personRows.join('') + '</div>' + unnamedHtml + detailBtn
+    };
+  }
+
+  function loadAllEpisodeSummary() {
+    if (!allData) return;
+    var seen = {};
+    var sections = [allData.production, allData.group_all];
+    for (var s = 0; s < sections.length; s++) {
+      var list = sections[s] || [];
+      for (var i = 0; i < list.length; i++) {
+        var p = list[i];
+        if ((p.custom_status || '') === '剪辑中' && !seen[p.name]) {
+          seen[p.name] = true;
+          fetchEpisodeStatus(p.name);
+        }
+      }
     }
   }
 
   function fetchEpisodeStatus(projectName) {
-    // 缓存短路：先把旧缓存渲染出来，再异步拉取最新
-    if (_episodeStatusCache[projectName]) {
-      updateCardEpisodeSummary(projectName, _episodeStatusCache[projectName]);
-    }
     if (_episodeStatusPending[projectName]) return _episodeStatusPending[projectName];
     _episodeStatusPending[projectName] = api('GET', '/api/project/' + encodeURIComponent(projectName) + '/episodes_status')
       .then(function(data) {
@@ -1865,80 +1997,9 @@
   function updateCardEpisodeSummary(projectName, data) {
     var box = document.querySelector('.ep-missing-summary[data-ep-summary="' + projectName.replace(/"/g, '\\"') + '"]');
     if (!box) return;
-    if (!data || !data.ok) {
-      box.className = 'ep-missing-summary';
-      box.textContent = '（无法获取集数状态）';
-      return;
-    }
-    var total = data.total || 0;
-    var missing = data.missing || [];
-    var unnamed = data.unnamed || [];
-    var plan = data.editor_plan || {};
-
-    if (total === 0) {
-      box.className = 'ep-missing-summary';
-      box.innerHTML = '请先设置「总集数」，再点「统计」识别文件';
-      return;
-    }
-    if (missing.length === 0) {
-      box.className = 'ep-missing-summary ok';
-      var detailHint = total > 0 ? ' <button class="ep-detail-btn" data-action="ep-detail" data-project="' + htm(projectName) + '">详情</button>' : '';
-      box.innerHTML = '✅ ' + (data.current_count || 0) + '/' + total + ' 集 全部输出完成' + detailHint;
-      return;
-    }
-
-    // 按剪辑人员分组
-    var groups = {};  // creator -> [ep numbers]
-    var unassigned = [];
-    for (var i = 0; i < missing.length; i++) {
-      var ep = missing[i];
-      var creator = plan[String(ep)] || plan[ep] || null;
-      if (creator) {
-        if (!groups[creator]) groups[creator] = [];
-        groups[creator].push(ep);
-      } else {
-        unassigned.push(ep);
-      }
-    }
-
-    // 把连续数字合并成范围字符串，[5,6,7,12,13] -> "05-07, 12-13"
-    function compactRange(nums) {
-      if (!nums.length) return '';
-      nums = nums.slice().sort(function(a, b) { return a - b; });
-      var parts = [];
-      var start = nums[0], prev = nums[0];
-      for (var k = 1; k < nums.length; k++) {
-        if (nums[k] === prev + 1) {
-          prev = nums[k];
-        } else {
-          parts.push(start === prev ? String(start).padStart(2, '0') : String(start).padStart(2, '0') + '-' + String(prev).padStart(2, '0'));
-          start = prev = nums[k];
-        }
-      }
-      parts.push(start === prev ? String(start).padStart(2, '0') : String(start).padStart(2, '0') + '-' + String(prev).padStart(2, '0'));
-      return parts.join(', ');
-    }
-
-    var lines = [];
-    for (var name in groups) {
-      if (!groups.hasOwnProperty(name)) continue;
-      lines.push('<span style="margin-right:10px"><b>' + htm(name) + '</b>: ' + compactRange(groups[name]) + '</span>');
-    }
-    if (unassigned.length > 0) {
-      lines.push('<span style="margin-right:10px;color:#6b6b70"><b>未分配</b>: ' + compactRange(unassigned) + '</span>');
-    }
-
-    var tip = '缺 ' + missing.length + '/' + total + ' 集';
-    if (unassigned.length > 0) tip += '（' + unassigned.length + ' 集未分配）';
-    var extra = '';
-    if (unnamed && unnamed.length > 0) {
-      extra = '<span class="ep-missing-creator">另有 ' + unnamed.length + ' 个文件未识别集号</span>';
-    }
-    box.className = 'ep-missing-summary has-missing';
-    box.innerHTML = '<b>' + tip + '</b>'
-      + '<div class="ep-missing-nums">' + lines.join('') + '</div>'
-      + extra
-      + '<button class="ep-detail-btn" data-action="ep-detail" data-project="' + htm(projectName) + '">详情/分配人员</button>';
+    var result = buildEpSummaryHtml(data, projectName, null);
+    box.className = result.className;
+    box.innerHTML = result.html;
   }
 
   function openEpisodeDetail(projectName) {
