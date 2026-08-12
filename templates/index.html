@@ -207,6 +207,10 @@
   .ep-detail-grid .ep-status.missing { color: #c5221f; font-weight: 600; }
   .ep-detail-footer { margin-top: 14px; padding-top: 10px; border-top: 1px solid #e5e5e7; display: flex; justify-content: flex-end; gap: 8px; }
   .ep-detail-no-plan-hint { font-size: 11px; color: #86868b; margin-bottom: 8px; font-style: italic; }
+  .ep-batch-bar { margin: 8px 0 4px; display: flex; align-items: center; }
+  .ep-batch-input { display: none; width: 100%; min-height: 120px; margin: 4px 0; padding: 10px 12px; border: 1px solid #d2d2d7; border-radius: 8px; font-family: ui-monospace, "Cascadia Code", "Consolas", monospace; font-size: 12px; line-height: 1.7; background: #fafafa; box-sizing: border-box; resize: vertical; outline: none; }
+  .ep-batch-input:focus { border-color: #0071e3; box-shadow: 0 0 0 2px rgba(0,113,227,0.1); background: #fff; }
+  .ep-batch-actions { margin: 4px 0 10px; display: flex; align-items: center; gap: 6px; }
 
   /* ---- card delivery stats (待交付卡片显示) ---- */
   .card-delivery-row { background: #f2f3f5; border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; }
@@ -1993,6 +1997,15 @@
         + '<div class="ep-detail-stat">缺失 <b style="color:#c5221f">' + missing.length + '</b></div>'
         + '<div class="ep-detail-stat">成片文件 <b>' + currentCount + '</b></div>'
       + '</div>'
+      + '<div class="ep-batch-bar">'
+        + '<button type="button" class="btn btn-secondary btn-sm" id="ep-batch-toggle">📋 批量粘贴分配表</button>'
+        + '<span class="ep-batch-hint" style="display:none;color:#86868b;font-size:12px;margin-left:8px">格式：姓名:起始-结束，每行一条（支持中英文冒号、波浪号、逗号混合）</span>'
+      + '</div>'
+      + '<textarea id="ep-batch-input" class="ep-batch-input" placeholder="任显翔：1-4&#10;陈陆杰：5-9&#10;陈春阳：10-15&#10;程梦：16-21&#10;..."></textarea>'
+      + '<div class="ep-batch-actions" style="display:none">'
+        + '<button type="button" class="btn btn-primary btn-sm" id="ep-batch-apply">应用到表格</button>'
+        + '<span id="ep-batch-apply-result" style="margin-left:8px;font-size:12px"></span>'
+      + '</div>'
       + (nums.length === 0 ? '<div class="ep-detail-no-plan-hint">暂无可显示的集号。先在卡片上点「统计」识别成片文件。</div>' : '')
       + grid
       + unnamedHtml
@@ -2005,6 +2018,85 @@
     document.getElementById('ep-detail-save').addEventListener('click', function() {
       saveEpisodePlan(projectName);
     });
+
+    // Toggle batch paste area
+    var batchToggle = document.getElementById('ep-batch-toggle');
+    var batchInput = document.getElementById('ep-batch-input');
+    var batchActions = document.querySelector('.ep-batch-actions');
+    var batchHint = document.querySelector('.ep-batch-hint');
+    batchToggle.addEventListener('click', function() {
+      var show = batchInput.style.display !== 'block';
+      batchInput.style.display = show ? 'block' : 'none';
+      batchActions.style.display = show ? 'block' : 'none';
+      batchHint.style.display = show ? 'inline' : 'none';
+    });
+    document.getElementById('ep-batch-apply').addEventListener('click', function() {
+      var result = parseBatchEditorPlan(batchInput.value);
+      applyBatchEditorPlan(result);
+    });
+  }
+
+  // Parse flexible batch text like:
+  //   任显翔：1-4
+  //   陈陆杰:5~9
+  //   张三 10-12, 15
+  //   李四 13, 14, 16-18
+  function parseBatchEditorPlan(text) {
+    var plan = {};
+    var lines = (text || '').split(/\r?\n/);
+    var lineRe = /^(.+?)\s*[:：]\s*(.+?)\s*$/;
+    lines.forEach(function(raw) {
+      var line = raw.trim();
+      if (!line) return;
+      // Try "name: range" first
+      var m = line.match(lineRe);
+      var name, rangeStr;
+      if (m) {
+        name = m[1].trim();
+        rangeStr = m[2].trim();
+      } else {
+        // Fallback: last whitespace-separated token(s) as range, rest as name
+        var idx = line.search(/\d/);
+        if (idx <= 0) return;
+        name = line.substring(0, idx).trim().replace(/[:：]$/, '').trim();
+        rangeStr = line.substring(idx).trim();
+      }
+      if (!name || !rangeStr) return;
+      // Expand ranges like "1-4", "5~9", "10,11,13-15"
+      var tokens = rangeStr.split(/[，,、\s]+/).filter(Boolean);
+      tokens.forEach(function(tok) {
+        var rng = tok.match(/^(\d{1,4})\s*[-~到至]\s*(\d{1,4})$/);
+        if (rng) {
+          var a = parseInt(rng[1], 10), b = parseInt(rng[2], 10);
+          if (a > b) { var tmp = a; a = b; b = tmp; }
+          for (var n = a; n <= b; n++) plan[String(n)] = name;
+        } else {
+          var single = tok.match(/^(\d{1,4})$/);
+          if (single) plan[String(single[1])] = name;
+        }
+      });
+    });
+    return plan;
+  }
+
+  // Fill all .ep-creator-input with values from plan object
+  function applyBatchEditorPlan(plan) {
+    var inputs = document.querySelectorAll('#modal-body .ep-creator-input');
+    var matched = 0;
+    for (var i = 0; i < inputs.length; i++) {
+      var ep = inputs[i].getAttribute('data-ep');
+      if (plan[String(ep)] !== undefined) {
+        inputs[i].value = plan[String(ep)];
+        matched++;
+      }
+    }
+    var summary = document.getElementById('ep-batch-apply-result');
+    var totalKeys = Object.keys(plan).length;
+    summary.textContent = '✅ 已填 ' + matched + ' 集，共解析 ' + totalKeys + ' 条分配；记得点右下角「保存剪辑人员」持久化。';
+    summary.style.color = '#137333';
+    // flash briefly — scroll to top of grid
+    var grid = document.querySelector('.ep-detail-grid');
+    if (grid) grid.scrollTop = 0;
   }
 
   function saveEpisodePlan(projectName) {
