@@ -320,6 +320,26 @@ def api_project_episodes(project_name):
     return jsonify({"ok": ok, "message": msg, "completed": completed})
 
 
+@app.route("/api/project/<path:project_name>/episodes_status", methods=["GET"])
+def api_project_episodes_status(project_name):
+    """返回项目剪辑进度详情：集号识别、缺失列表、剪辑人员分配"""
+    result = sync_engine.get_episode_status(project_name)
+    return jsonify(result)
+
+
+@app.route("/api/project/<path:project_name>/episodes_plan", methods=["POST"])
+def api_project_episodes_plan(project_name):
+    """保存项目每集剪辑人员分配（plan: {"1": "张三", "2": "李四"}）"""
+    data = request.get_json(silent=True) or {}
+    plan = data.get("plan") or {}
+    if not isinstance(plan, dict):
+        return jsonify({"ok": False, "message": "plan 必须是对象 {集号: 姓名}"}), 400
+    # 过滤掉空姓名
+    clean = {str(k): v.strip() for k, v in plan.items() if v and str(v).strip()}
+    db.set_episode_plan(project_name, clean)
+    return jsonify({"ok": True, "message": "已保存 %d 集剪辑人员" % len(clean), "plan": clean})
+
+
 @app.route("/api/project/<path:project_name>/auto_count")
 def api_project_auto_count(project_name):
     """自动统计成片文件数量"""

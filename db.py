@@ -61,6 +61,11 @@ class Database:
             except sqlite3.OperationalError:
                 c.execute(
                     "ALTER TABLE projects ADD COLUMN current_episodes INTEGER DEFAULT 0")
+            try:
+                c.execute("SELECT episode_plan FROM projects LIMIT 1")
+            except sqlite3.OperationalError:
+                c.execute(
+                    "ALTER TABLE projects ADD COLUMN episode_plan TEXT DEFAULT '{}'")
             c.execute("""CREATE TABLE IF NOT EXISTS sync_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 project_name TEXT,
@@ -132,6 +137,28 @@ class Database:
         with self.get_conn() as conn:
             conn.execute(
                 f"UPDATE projects SET {fields} WHERE name=?", values)
+
+    def set_episode_plan(self, name, plan_dict):
+        """保存剪辑人员分配表（JSON: {"1": "张三", "2": "李四", ...}）"""
+        import json as _j
+        if not isinstance(plan_dict, dict):
+            plan_dict = {}
+        with self.get_conn() as conn:
+            conn.execute(
+                "UPDATE projects SET episode_plan=? WHERE name=?",
+                (_j.dumps(plan_dict, ensure_ascii=False), name))
+
+    def get_episode_plan(self, name):
+        p = self.get_project(name)
+        if not p:
+            return {}
+        raw = p.get("episode_plan") or "{}"
+        try:
+            import json as _j
+            v = _j.loads(raw) if isinstance(raw, str) else raw
+            return v if isinstance(v, dict) else {}
+        except Exception:
+            return {}
 
     def delete_project(self, name):
         with self.get_conn() as conn:

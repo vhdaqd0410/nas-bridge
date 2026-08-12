@@ -179,6 +179,34 @@
   .ep-text { font-size: 11px; color: #86868b; }
   .ep-text.complete { color: #137333; font-weight: 600; }
   .ep-notify { font-size: 11px; color: #137333; font-weight: 600; margin-top: 3px; display: flex; align-items: center; gap: 4px; }
+  .ep-missing-summary { margin-top: 4px; padding: 6px 10px; border-radius: 6px; font-size: 11.5px; line-height: 1.5; }
+  .ep-missing-summary.has-missing { background: #fff5f5; border: 1px solid #fecaca; color: #c5221f; }
+  .ep-missing-summary.ok { background: #e6f4ea; border: 1px solid #a8d5ba; color: #137333; }
+  .ep-missing-summary .ep-missing-nums { font-weight: 600; margin: 2px 0; word-break: break-all; }
+  .ep-missing-summary .ep-missing-creator { display: block; font-size: 11px; color: #6b6b70; margin-top: 2px; }
+  .ep-missing-summary .ep-detail-btn { font-size: 11px; padding: 2px 8px; border-radius: 4px; border: 1px solid currentColor; background: transparent; cursor: pointer; margin-left: 6px; color: inherit; font-family: inherit; }
+  .ep-missing-summary .ep-detail-btn:hover { opacity: 0.8; }
+
+  /* ---- episode detail modal ---- */
+  .ep-detail-header { display: flex; align-items: center; gap: 16px; margin-bottom: 14px; flex-wrap: wrap; }
+  .ep-detail-stat { font-size: 12px; color: #86868b; }
+  .ep-detail-stat b { color: #1d1d1f; font-size: 14px; margin-left: 2px; font-variant-numeric: tabular-nums; }
+  .ep-detail-missing-section { margin-bottom: 14px; }
+  .ep-detail-section-title { font-size: 12px; font-weight: 600; color: #1d1d1f; margin-bottom: 6px; padding-bottom: 4px; border-bottom: 1px solid #e5e5e7; display: flex; align-items: center; gap: 6px; }
+  .ep-detail-section-title .badge { font-size: 11px; font-weight: normal; padding: 1px 6px; border-radius: 10px; background: #f2f3f5; color: #6b6b70; }
+  .ep-detail-section-title.missing-title { color: #c5221f; border-color: #fecaca; }
+  .ep-detail-grid { display: grid; grid-template-columns: 56px 1fr 72px; gap: 4px 10px; align-items: center; font-size: 12px; }
+  .ep-detail-grid .ep-col-head { font-weight: 600; color: #86868b; font-size: 11px; }
+  .ep-detail-grid .ep-num { font-variant-numeric: tabular-nums; color: #4a4a4a; }
+  .ep-detail-grid .ep-num.missing-num { color: #c5221f; font-weight: 600; }
+  .ep-detail-grid .ep-creator-input { width: 100%; padding: 3px 8px; border-radius: 4px; border: 1px solid #d2d2d7; font-size: 12px; font-family: inherit; outline: none; background: #fff; }
+  .ep-detail-grid .ep-creator-input:focus { border-color: #0071e3; box-shadow: 0 0 0 2px rgba(0,113,227,0.1); }
+  .ep-detail-grid .ep-creator-input.missing-creator { border-color: #fecaca; background: #fff5f5; }
+  .ep-detail-grid .ep-status { font-size: 11px; text-align: center; }
+  .ep-detail-grid .ep-status.ok { color: #137333; }
+  .ep-detail-grid .ep-status.missing { color: #c5221f; font-weight: 600; }
+  .ep-detail-footer { margin-top: 14px; padding-top: 10px; border-top: 1px solid #e5e5e7; display: flex; justify-content: flex-end; gap: 8px; }
+  .ep-detail-no-plan-hint { font-size: 11px; color: #86868b; margin-bottom: 8px; font-style: italic; }
 
   /* ---- card delivery stats (待交付卡片显示) ---- */
   .card-delivery-row { background: #f2f3f5; border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; }
@@ -580,9 +608,11 @@
         + '<span class="ep-sep">集</span>'
         + '<button class="ep-btn ep-btn-primary" data-action="ep-save" data-project="' + htm(p.name) + '">保存</button>'
         + '<button class="ep-btn" data-action="ep-auto" data-project="' + htm(p.name) + '">统计</button>'
+        + '<button class="ep-btn" data-action="ep-detail" data-project="' + htm(p.name) + '">详情</button>'
         + '</div>'
         + '<div class="ep-bar"><div class="ep-fill' + (epComplete ? ' complete' : '') + '" style="width:' + epPct + '%"></div></div>'
         + '<span class="ep-text' + (epComplete ? ' complete' : '') + '">' + currentEp + '/' + totalEp + ' (' + epPct + '%)' + (epComplete ? ' ✅' : '') + '</span>'
+        + '<div class="ep-missing-summary" data-ep-summary="' + htm(p.name) + '">加载中...</div>'
         + '<div class="card-delivery-progress" style="display:block">'
         + '<div class="card-dp-bar"><div class="card-dp-fill" style="width:0%"></div></div>'
         + '<span class="card-dp-text">等待交付...</span>'
@@ -857,6 +887,8 @@
       updateDepartmentFilter();
       try {
         renderAll();
+        // 渲染完卡片后，异步拉取每个剪辑中项目的集数 summary，不阻塞主流程
+        setTimeout(loadAllEpisodeSummary, 30);
       } catch(e) {
         console.error('renderAll error:', e);
         document.getElementById('project-sections').innerHTML =
@@ -1622,6 +1654,7 @@
       var epProject = epBtn.getAttribute('data-project');
       if (epAction === 'ep-save') saveEpisodes(epProject, epBtn);
       else if (epAction === 'ep-auto') autoCountEpisodes(epProject, epBtn);
+      else if (epAction === 'ep-detail') openEpisodeDetail(epProject);
       else if (epAction === 'delivery-refresh') refreshCardDeliveryStats(epProject, epBtn);
       else if (epAction === 'deliver-start') startDeliver(epProject, epBtn);
       return;
@@ -1782,6 +1815,190 @@
         }
       }).catch(function() { showToast('集数保存失败'); });
     }).catch(function() { showToast('操作失败'); });
+  }
+
+  // ---- episode summary (shows missing list + responsible person on each card) ----
+  // 缓存每个项目最近一次 episodes_status，避免重复请求
+  var _episodeStatusCache = {};
+  var _episodeStatusPending = {};
+
+  function loadAllEpisodeSummary() {
+    if (!allData || !allData.projects) return;
+    var names = [];
+    for (var i = 0; i < allData.projects.length; i++) {
+      var p = allData.projects[i];
+      if ((p.custom_status || '') === '剪辑中' && p.project_type !== 'production') {
+        names.push(p.name);
+      }
+    }
+    for (var j = 0; j < names.length; j++) {
+      fetchEpisodeStatus(names[j]);
+    }
+  }
+
+  function fetchEpisodeStatus(projectName) {
+    if (_episodeStatusPending[projectName]) return _episodeStatusPending[projectName];
+    _episodeStatusPending[projectName] = api('GET', '/api/project/' + encodeURIComponent(projectName) + '/episodes_status')
+      .then(function(data) {
+        if (data && data.ok) _episodeStatusCache[projectName] = data;
+        updateCardEpisodeSummary(projectName, data);
+        return data;
+      }).catch(function() {
+        updateCardEpisodeSummary(projectName, { ok: false });
+      }).then(function(data) {
+        delete _episodeStatusPending[projectName];
+        return data;
+      });
+    return _episodeStatusPending[projectName];
+  }
+
+  function updateCardEpisodeSummary(projectName, data) {
+    var box = document.querySelector('.ep-missing-summary[data-ep-summary="' + projectName.replace(/"/g, '\\"') + '"]');
+    if (!box) return;
+    if (!data || !data.ok) {
+      box.className = 'ep-missing-summary';
+      box.textContent = '（无法获取集数状态）';
+      return;
+    }
+    var total = data.total || 0;
+    var missing = data.missing || [];
+    var unnamed = data.unnamed || [];
+    var plan = data.editor_plan || {};
+
+    if (total === 0) {
+      box.className = 'ep-missing-summary';
+      box.innerHTML = '请先设置「总集数」，再点「统计」识别文件';
+      return;
+    }
+    if (missing.length === 0) {
+      box.className = 'ep-missing-summary ok';
+      var detailHint = total > 0 ? ' <button class="ep-detail-btn" data-action="ep-detail" data-project="' + htm(projectName) + '">详情</button>' : '';
+      box.innerHTML = '✅ ' + (data.current_count || 0) + '/' + total + ' 集 全部输出完成' + detailHint;
+      return;
+    }
+
+    // 有缺失：把每集负责人拼出来
+    var namedMissing = [];
+    for (var i = 0; i < missing.length; i++) {
+      var ep = missing[i];
+      var creator = plan[String(ep)] || plan[ep] || null;
+      namedMissing.push({ ep: ep, creator: creator });
+    }
+    var missingNumsHtml = namedMissing.map(function(x) {
+      var suffix = x.creator ? ' <small style="color:#6b6b70">(' + htm(x.creator) + ')</small>' : '';
+      return '<span style="margin-right:6px">' + String(x.ep).padStart(2, '0') + suffix + '</span>';
+    }).join('');
+    var unassigned = namedMissing.filter(function(x) { return !x.creator; }).length;
+    var tip = '缺 ' + missing.length + '/' + total + ' 集';
+    if (unassigned > 0) tip += '（' + unassigned + ' 集未分配剪辑）';
+    var extra = '';
+    if (unnamed && unnamed.length > 0) {
+      extra = '<span class="ep-missing-creator">另有 ' + unnamed.length + ' 个文件未识别集号</span>';
+    }
+    box.className = 'ep-missing-summary has-missing';
+    box.innerHTML = '<b>' + tip + '</b><div class="ep-missing-nums">' + missingNumsHtml + '</div>'
+      + extra
+      + '<button class="ep-detail-btn" data-action="ep-detail" data-project="' + htm(projectName) + '">详情/分配人员</button>';
+  }
+
+  function openEpisodeDetail(projectName) {
+    var title = document.getElementById('modal-title');
+    var body = document.getElementById('modal-body');
+    title.textContent = '集数详情 - ' + projectName;
+    body.innerHTML = '<div class="empty"><div class="loading">加载集数状态...</div></div>';
+    document.getElementById('modal').classList.add('active');
+
+    fetchEpisodeStatus(projectName).then(function(data) {
+      if (!data || !data.ok) {
+        body.innerHTML = '<div class="empty"><div class="empty-icon">⚠️</div><div>获取失败</div></div>';
+        return;
+      }
+      renderEpisodeDetailBody(projectName, data);
+    });
+  }
+
+  function renderEpisodeDetailBody(projectName, data) {
+    var body = document.getElementById('modal-body');
+    var total = data.total || 0;
+    var present = data.present || [];
+    var missing = data.missing || [];
+    var unnamed = data.unnamed || [];
+    var plan = data.editor_plan || {};
+    var currentCount = data.current_count || 0;
+
+    // 表头
+    var grid = '<div class="ep-detail-grid">'
+      + '<div class="ep-col-head">集号</div><div class="ep-col-head">状态</div><div class="ep-col-head">剪辑人员</div>';
+
+    // 完整渲染 1..total；无 total 时仅渲染 present + missing 里的集号
+    var nums;
+    if (total > 0) {
+      nums = [];
+      for (var i = 1; i <= total; i++) nums.push(i);
+    } else {
+      var s = {};
+      present.forEach(function(x) { s[x] = true; });
+      missing.forEach(function(x) { s[x] = true; });
+      nums = Object.keys(s).map(Number).sort(function(a, b) { return a - b; });
+    }
+
+    for (var j = 0; j < nums.length; j++) {
+      var n = nums[j];
+      var isMissing = missing.indexOf(n) >= 0;
+      var val = plan[String(n)] || plan[n] || '';
+      grid += '<div class="ep-num' + (isMissing ? ' missing-num' : '') + '">第 ' + String(n).padStart(2, '0') + ' 集</div>'
+        + '<div class="ep-status ' + (isMissing ? 'missing' : 'ok') + '">' + (isMissing ? '未输出' : '已输出 ✅') + '</div>'
+        + '<input class="ep-creator-input' + (isMissing ? ' missing-creator' : '') + '" data-ep="' + n + '" placeholder="' + (isMissing ? '请填剪辑人员' : '可填可不填') + '" value="' + htm(val) + '">';
+    }
+    grid += '</div>';
+
+    var unnamedHtml = '';
+    if (unnamed.length > 0) {
+      var list = unnamed.slice(0, 20).map(function(n) { return '<code>' + htm(n) + '</code>'; }).join('<br>');
+      var more = unnamed.length > 20 ? '<br>…还有 ' + (unnamed.length - 20) + ' 个' : '';
+      unnamedHtml = '<div style="margin-top:12px;font-size:12px;color:#86868b">⚠️ 以下 ' + unnamed.length + ' 个文件未能识别集号：<br>' + list + more + '</div>';
+    }
+
+    body.innerHTML =
+      '<div class="ep-detail-header">'
+        + '<div class="ep-detail-stat">总集数 <b>' + total + '</b></div>'
+        + '<div class="ep-detail-stat">已输出 <b style="color:#137333">' + present.length + '</b></div>'
+        + '<div class="ep-detail-stat">缺失 <b style="color:#c5221f">' + missing.length + '</b></div>'
+        + '<div class="ep-detail-stat">成片文件 <b>' + currentCount + '</b></div>'
+      + '</div>'
+      + (nums.length === 0 ? '<div class="ep-detail-no-plan-hint">暂无可显示的集号。先在卡片上点「统计」识别成片文件。</div>' : '')
+      + grid
+      + unnamedHtml
+      + '<div class="ep-detail-footer">'
+        + '<button class="btn btn-secondary btn-sm" id="ep-detail-close">关闭</button>'
+        + '<button class="btn btn-primary btn-sm" id="ep-detail-save">保存剪辑人员</button>'
+      + '</div>';
+
+    document.getElementById('ep-detail-close').addEventListener('click', closeModal);
+    document.getElementById('ep-detail-save').addEventListener('click', function() {
+      saveEpisodePlan(projectName);
+    });
+  }
+
+  function saveEpisodePlan(projectName) {
+    var inputs = document.querySelectorAll('#modal-body .ep-creator-input');
+    var plan = {};
+    for (var i = 0; i < inputs.length; i++) {
+      var ep = inputs[i].getAttribute('data-ep');
+      var val = (inputs[i].value || '').trim();
+      if (val) plan[String(ep)] = val;
+    }
+    showToast('正在保存剪辑人员分配...');
+    api('POST', '/api/project/' + encodeURIComponent(projectName) + '/episodes_plan', { plan: plan }).then(function(data) {
+      if (data.ok) {
+        showToast(data.message || '已保存');
+        // 清缓存，强制重新拉一次并刷新卡片
+        delete _episodeStatusCache[projectName];
+        fetchEpisodeStatus(projectName);
+      } else {
+        showToast(data.message || '保存失败');
+      }
+    }).catch(function() { showToast('保存失败，请检查网络'); });
   }
 
   function refreshCardDeliveryStats(projectName, btn) {

@@ -1,5 +1,6 @@
 """素材同步引擎 - 支持多制作部源 + 递归查找成片目录"""
 import os
+import re
 import shutil
 import subprocess
 import logging
@@ -1482,6 +1483,132 @@ class SyncEngine:
             except OSError:
                 continue
         return count
+
+    # ---------- 文件名集号解析 ----------
+
+    # 一个项目内成片文件的命名应该一致；在所有命名尝试中取"出现频次最高的那个正则"
+    _EP_PATTERNS = [
+        # 1) EP01 / EP_01 / EP-01（大写/小写都认）。前缀不能紧跟字母/数字，避免 PREP01 被误匹配
+        re.compile(r'(?i)(?:^|[^a-z0-9])EP[_\s\-]?(\d{1,3})(?!\d)'),
+        # 2) S01E01 里的 E01，同样前缀约束
+        re.compile(r'(?i)(?:^|[^a-z0-9])S\d{1,2}E[_\s\-]?(\d{1,3})(?!\d)'),
+        # 3) 第01集 / 第01话
+        re.compile(r'第[_\s\-]*(\d{1,3})[集话]'),
+        # 4) _01_ / -01- /  01 - 数字夹在分隔符之间（带边界）
+        re.compile(r'(?:[_\-\s]|^)(\d{1,3})(?:[_\-\s\.]|$)'),
+    ]
+
+    def _extract_episode_number(self, filename):
+        """从单个文件名里提取集号，失败返回 None。"""
+        base = os.path.splitext(filename)[0]
+        hits = []
+        for idx, pat in enumerate(self._EP_PATTERNS):
+            for m in pat.finditer(base):
+                try:
+                    n = int(m.group(1))
+                except (TypeError, ValueError):
+                    continue
+                if 1 <= n <= 999:
+                    hits.append((idx, n))
+                    break  # 每个 pattern 最多取一次匹配，避免一个文件名里出现多个独立数字
+        if not hits:
+            return None
+        # 优先级：pattern 索引越小越优先
+        hits.sort(key=lambda x: x[0])
+        return hits[0][1]
+
+    def _collect_video_filenames(self, project_name, which="group"):
+        """收集项目视频文件名列表。which: group=组内成片, dest=制作部成片"""
+        proj = self.db.get_project(project_name)
+        if not proj:
+            return []
+        if which == "dest":
+            root = proj.get("production_path", "")
+            dirs = self._find_output_dirs(root, project_name) if root else []
+        else:
+            root = proj.get("group_path", "")
+            dirs = self._find_output_dirs(root, project_name) if root else []
+        if not dirs:
+            return []
+        video_exts = {'.mp4', '.mkv', '.avi', '.mov', '.webm', '.flv', '.wmv', '.m4v'}
+        names = []
+        for d in dirs:
+            try:
+                for name in os.listdir(d):
+                    full = os.path.join(d, name)
+                    if os.path.isfile(full) and os.path.splitext(name)[1].lower() in video_exts:
+                        names.append(name)
+            except OSError:
+                continue
+        return names
+
+    def get_episode_status(self, project_name):
+        """返回项目剪辑进度详情，供前端渲染：
+        {
+            ok, project_name,
+            total: int (来自 DB),
+            current_count: int (实际视频文件数),
+            present: [1, 2, 3, ...],          # 从文件名识别的集号
+            missing: [4, 27, ...],             # 缺失集号
+            unnamed: [文件名...],               # 文件名里没识别出集号的
+            editor_plan: {"1": "张三", ...},
+            editor_missing: [
+                {"episode": 4, "editor": null},
+                {"episode": 27, "editor": "王五"},
+            ]
+        }
+        """
+        proj = self.db.get_project(project_name)
+        if not proj:
+            return {"ok": False, "message": "项目不存在"}
+
+        total = int(proj.get("total_episodes") or 0)
+        editor_plan = self.db.get_episode_plan(project_name)
+
+        video_names = self._collect_video_filenames(project_name, which="group")
+        current_count = len(video_names)
+
+        present_set = set()
+        unnamed = []
+        for name in video_names:
+            n = self._extract_episode_number(name)
+            if n is not None:
+                present_set.add(n)
+            else:
+                unnamed.append(name)
+
+        present = sorted(present_set)
+
+        # 如果 DB 里没设 total，但我们识别到了集号范围，用 max(present) 自动回填
+        if total == 0 and present:
+            auto_total = max(present)
+            logger.info("项目 %s 未设总集数，用文件名识别到的最大集号 %d 自动回填", project_name, auto_total)
+            self.db.update_project_status(
+                project_name,
+                total_episodes=auto_total,
+                current_episodes=current_count)
+            total = auto_total
+
+        missing = []
+        if total > 0:
+            missing = [i for i in range(1, total + 1) if i not in present_set]
+
+        editor_missing = [
+            {"episode": ep, "editor": editor_plan.get(str(ep)) or editor_plan.get(ep) or None}
+            for ep in missing
+        ]
+
+        return {
+            "ok": True,
+            "project_name": project_name,
+            "total": total,
+            "current_count": current_count,
+            "present": present,
+            "missing": missing,
+            "unnamed": unnamed,
+            "editor_plan": editor_plan,
+            "editor_missing": editor_missing,
+        }
 
     # ==================== 多模式文件列表 ====================
 
